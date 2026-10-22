@@ -1,1 +1,2 @@
+# Flask helps Python receive web requests and send API replies.
 Flask>=3.0,<4.0

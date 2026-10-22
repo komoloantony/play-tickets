@@ -1,8 +1,13 @@
+# Python's temporary files are made automatically while it runs.
 __pycache__/
 *.py[cod]
+
+# Keep your local Python environment and private settings out of GitHub.
 .venv/
 venv/
 .env
+
+# The database only contains local test data; do not upload it.
 play_tickets.db
 play_tickets.db-shm
 play_tickets.db-wal

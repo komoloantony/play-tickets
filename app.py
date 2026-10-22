@@ -10,14 +10,16 @@ from flask import Flask, g, jsonify, request
 
 
 BASE_DIR = Path(__file__).resolve().parent
+# Let us move the database later without changing the code.
 DATABASE = Path(os.environ.get("PLAY_TICKETS_DATABASE", BASE_DIR / "play_tickets.db"))
+# Keep a ticket on hold for this long while a buyer is paying.
 RESERVATION_HOLD_MINUTES = 15
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("PLAY_TICKETS_SECRET", "local-development-key")
 
 
 def get_db():
-    """Reuse one SQLite connection per Flask request, then close it at teardown."""
+    """Open one database connection for this web request and reuse it."""
     if "db" not in g:
         g.db = sqlite3.connect(DATABASE)
         g.db.row_factory = sqlite3.Row
@@ -27,16 +29,18 @@ def get_db():
 
 @app.teardown_appcontext
 def close_db(_error=None):
+    """Close the connection when Flask has finished answering the request."""
     db = g.pop("db", None)
     if db is not None:
         db.close()
 
 
 def init_db():
-    """Create the local schema and add reservation expiry to older databases."""
+    """Create the tables, or add the new expiry field to an older database."""
     db = get_db()
     db.executescript(
         """
+        -- An event is a show, like a play happening at a theatre.
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -45,6 +49,7 @@ def init_db():
             description TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
         );
+        -- Each event can offer one or more kinds of tickets.
         CREATE TABLE IF NOT EXISTS ticket_types (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -52,6 +57,7 @@ def init_db():
             price REAL NOT NULL CHECK(price >= 0),
             capacity INTEGER NOT NULL CHECK(capacity > 0)
         );
+        -- An order records a buyer's request for tickets and its payment state.
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticket_type_id INTEGER NOT NULL REFERENCES ticket_types(id),
@@ -67,7 +73,7 @@ def init_db():
     order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}
     if "expires_at" not in order_columns:
         db.execute("ALTER TABLE orders ADD COLUMN expires_at TEXT")
-    # Older prototype reservations should not hold inventory forever.
+    # Old holds have no timer, so let them expire now and free their tickets.
     db.execute(
         "UPDATE orders SET expires_at = created_at WHERE status = 'pending' AND expires_at IS NULL"
     )
@@ -75,7 +81,7 @@ def init_db():
 
 
 def remaining_tickets(ticket_type):
-    """Count confirmed sales and active holds; expired holds no longer reserve stock."""
+    """Count tickets already sold and tickets still being held for payment."""
     sold = get_db().execute(
         "SELECT COALESCE(SUM(quantity), 0) FROM orders "
         "WHERE ticket_type_id = ? AND (status = 'confirmed' "
@@ -86,6 +92,7 @@ def remaining_tickets(ticket_type):
 
 
 def expire_pending_reservations(db):
+    """Mark old unpaid holds as expired so their tickets can be bought again."""
     db.execute(
         "UPDATE orders SET status = 'expired' "
         "WHERE status = 'pending' AND expires_at <= ?",
@@ -94,6 +101,7 @@ def expire_pending_reservations(db):
 
 
 def ticket_type_json(ticket_type):
+    """Turn one database ticket row into simple JSON for the frontend."""
     return {
         "id": ticket_type["id"],
         "name": ticket_type["name"],
@@ -104,7 +112,7 @@ def ticket_type_json(ticket_type):
 
 
 def event_json(event):
-    """Convert a database row into the event shape returned to frontend clients."""
+    """Turn an event row and its ticket types into JSON for the frontend."""
     db = get_db()
     ticket_types = db.execute(
         "SELECT * FROM ticket_types WHERE event_id = ? ORDER BY price", (event["id"],)
@@ -121,14 +129,14 @@ def event_json(event):
 
 @app.get("/")
 def api_root():
-    """Tell frontend developers where to find the versioned API health check."""
+    """Show the frontend where it can check whether the API is running."""
     return jsonify({"service": "Play Tickets API", "version": "v1", "health": "/api/v1/health"})
 
 
 # JSON API for the independently developed frontend.
 @app.get("/api/v1/events")
 def api_list_events():
-    """Return every event with its ticket types and current available quantities."""
+    """Give the frontend all events, ticket prices, and tickets left."""
     events = get_db().execute(
         "SELECT * FROM events ORDER BY starts_at, id"
     ).fetchall()
@@ -137,12 +145,13 @@ def api_list_events():
 
 @app.get("/api/v1/health")
 def api_health():
+    """A small check used to see if the server is awake."""
     return jsonify({"status": "ok"})
 
 
 @app.post("/api/v1/events")
 def api_create_event():
-    """Create an event and its initial ticket type from the frontend's JSON payload."""
+    """Save a new event and its first ticket type from the frontend's JSON."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
@@ -156,6 +165,7 @@ def api_create_event():
         return jsonify({"error": "ticket_type must include name, price, and capacity."}), 400
 
     ticket_name = str(ticket_data.get("name", "")).strip()
+    # Check the event name, ticket price, and ticket limit before saving anything.
     try:
         datetime.fromisoformat(starts_at)
         price = float(ticket_data["price"])
@@ -165,6 +175,7 @@ def api_create_event():
     except (KeyError, TypeError, ValueError, OverflowError):
         return jsonify({"error": "Provide an event name, venue, valid ISO date/time, ticket name, non-negative price, and positive capacity."}), 400
 
+    # Save the show and its first ticket type together in the database.
     db = get_db()
     cursor = db.execute(
         "INSERT INTO events (name, venue, starts_at, description, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -182,7 +193,7 @@ def api_create_event():
 
 @app.get("/api/v1/events/<int:event_id>")
 def api_get_event(event_id):
-    """Return one event, or a JSON 404 response when the ID does not exist."""
+    """Give the frontend one event, or say it could not be found."""
     event = get_db().execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
     if event is None:
         return jsonify({"error": "Event not found."}), 404
@@ -191,7 +202,7 @@ def api_get_event(event_id):
 
 @app.post("/api/v1/ticket-types/<int:ticket_type_id>/reservations")
 def api_reserve_tickets(ticket_type_id):
-    """Create a 15-minute pending hold; payment confirmation is a separate future step."""
+    """Hold tickets for 15 minutes while the buyer tries to pay."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
@@ -214,14 +225,15 @@ def api_reserve_tickets(ticket_type_id):
     if ticket_type is None:
         return jsonify({"error": "Ticket type not found."}), 404
 
-    # Mark stale holds before checking inventory, then lock writes so concurrent requests
-    # cannot both see the same last ticket as available.
+    # Clear old holds first. Then lock the database while checking tickets so two
+    # buyers cannot both grab what looks like the very last ticket.
     expire_pending_reservations(db)
     db.commit()
     db.execute("BEGIN IMMEDIATE")
     available = remaining_tickets(ticket_type)
     if quantity > available:
         db.rollback()
+        # HTTP 409 means the request is okay, but the tickets are no longer available.
         return jsonify({"error": "Not enough tickets remain.", "available": available}), 409
     created_at = datetime.now(timezone.utc)
     expires_at = created_at + timedelta(minutes=RESERVATION_HOLD_MINUTES)
