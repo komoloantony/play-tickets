@@ -2,6 +2,14 @@
 
 This folder contains the Python backend for Play Tickets. The frontend is the part people see and click; a teammate is building that separately. The backend stores events and reservations. The API is the messenger between the frontend and backend, and JSON is the simple text format they use to send information to each other.
 
+## What each file is for
+
+- **`app.py`** — The Python app. It contains the API and the code for creating events, checking ticket numbers, and saving buyers' ticket reservations.
+- **`requirements.txt`** — The list of Python tools the app needs. Right now, that is Flask.
+- **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
+- **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
+- **`play_tickets.db`** — The local database where the app saves events, ticket types, and reservations. The app creates this file when it starts; it is not included in GitHub.
+
 ## Run locally
 
 1. Create and activate a Python virtual environment.
