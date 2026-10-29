@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Create event · Play Tickets{% endblock %}
+{% block content %}
+<section class="form-page"><a class="back-link" href="{{ url_for('index') }}">← &nbsp; All events</a><p class="eyebrow">LET'S MAKE IT HAPPEN</p><h1>Put on a show.</h1><p class="form-intro">Add the details and your event will be ready for ticket reservations.</p>
+  <form class="form-card" method="post">
+    <label>Event name<input name="name" maxlength="120" required placeholder="e.g. The Last Laugh"></label>
+    <label>Venue<input name="venue" maxlength="160" required placeholder="Venue name and location"></label>
+    <label>Date and time<input name="starts_at" type="datetime-local" required></label>
+    <label>About this event<textarea name="description" rows="4" maxlength="1000" placeholder="Tell people what makes this one special"></textarea></label>
+    <div class="form-divider"><span>TICKETS</span></div>
+    <label>Ticket type<input name="ticket_name" maxlength="80" required value="General admission"></label>
+    <div class="form-row"><label>Price<input name="price" type="number" min="0" step="0.01" required placeholder="0.00"></label><label>Available tickets<input name="capacity" type="number" min="1" step="1" required placeholder="100"></label></div>
+    <button class="button" type="submit">Create event <span>↗</span></button>
+  </form>
+</section>
+{% endblock %}

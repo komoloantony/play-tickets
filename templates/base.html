@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#172526">
+  <title>{% block title %}Play Tickets{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">P</span><span>Play Tickets<small>MAKE IT A NIGHT</small></span></a>
+    <nav aria-label="Main navigation"><a href="{{ url_for('index') }}">Events</a><a href="{{ url_for('admin') }}">Dashboard</a><a class="button button-small" href="{{ url_for('new_event') }}">Create event <span>+</span></a></nav>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="notices">{% for category, message in messages %}<p class="notice {{ category }}">{{ message }}</p>{% endfor %}</div>{% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer><span>Play Tickets</span><span>Events, tickets, and the people who bring them to life.</span></footer>
+</body>
+</html>

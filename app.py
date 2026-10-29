@@ -2,102 +2,39 @@
 
 import os
 import math
-import sqlite3
+import hmac
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from functools import wraps
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, jsonify, request
+from database import close_db, expire_pending_reservations, get_db, init_db, remaining_tickets
 
 
-BASE_DIR = Path(__file__).resolve().parent
-# Let us move the database later without changing the code.
-DATABASE = Path(os.environ.get("PLAY_TICKETS_DATABASE", BASE_DIR / "play_tickets.db"))
 # Keep a ticket on hold for this long while a buyer is paying.
 RESERVATION_HOLD_MINUTES = 15
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("PLAY_TICKETS_SECRET", "local-development-key")
 
 
-def get_db():
-    """Open one database connection for this web request and reuse it."""
-    if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
+app.teardown_appcontext(close_db)
 
 
-@app.teardown_appcontext
-def close_db(_error=None):
-    """Close the connection when Flask has finished answering the request."""
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+def admin_required(view):
+    """Only let requests with the private admin token open buyer records."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        expected_token = os.environ.get("PLAY_TICKETS_ADMIN_TOKEN")
+        if not expected_token:
+            return jsonify({"error": "Admin access is not configured on this server."}), 503
 
+        scheme, _, supplied_token = request.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(supplied_token, expected_token):
+            return jsonify({"error": "A valid admin token is required."}), 401, {
+                "WWW-Authenticate": "Bearer"
+            }
+        return view(*args, **kwargs)
 
-def init_db():
-    """Create the tables, or add the new expiry field to an older database."""
-    db = get_db()
-    db.executescript(
-        """
-        -- An event is a show, like a play happening at a theatre.
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            venue TEXT NOT NULL,
-            starts_at TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        );
-        -- Each event can offer one or more kinds of tickets.
-        CREATE TABLE IF NOT EXISTS ticket_types (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-            name TEXT NOT NULL,
-            price REAL NOT NULL CHECK(price >= 0),
-            capacity INTEGER NOT NULL CHECK(capacity > 0)
-        );
-        -- An order records a buyer's request for tickets and its payment state.
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_type_id INTEGER NOT NULL REFERENCES ticket_types(id),
-            buyer_name TEXT NOT NULL,
-            buyer_email TEXT NOT NULL,
-            quantity INTEGER NOT NULL CHECK(quantity > 0),
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            expires_at TEXT
-        );
-        """
-    )
-    order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}
-    if "expires_at" not in order_columns:
-        db.execute("ALTER TABLE orders ADD COLUMN expires_at TEXT")
-    # Old holds have no timer, so let them expire now and free their tickets.
-    db.execute(
-        "UPDATE orders SET expires_at = created_at WHERE status = 'pending' AND expires_at IS NULL"
-    )
-    db.commit()
-
-
-def remaining_tickets(ticket_type):
-    """Count tickets already sold and tickets still being held for payment."""
-    sold = get_db().execute(
-        "SELECT COALESCE(SUM(quantity), 0) FROM orders "
-        "WHERE ticket_type_id = ? AND (status = 'confirmed' "
-        "OR (status = 'pending' AND expires_at > ?))",
-        (ticket_type["id"], datetime.now(timezone.utc).isoformat()),
-    ).fetchone()[0]
-    return ticket_type["capacity"] - sold
-
-
-def expire_pending_reservations(db):
-    """Mark old unpaid holds as expired so their tickets can be bought again."""
-    db.execute(
-        "UPDATE orders SET status = 'expired' "
-        "WHERE status = 'pending' AND expires_at <= ?",
-        (datetime.now(timezone.utc).isoformat(),),
-    )
+    return wrapped
 
 
 def ticket_type_json(ticket_type):
@@ -150,8 +87,9 @@ def api_health():
 
 
 @app.post("/api/v1/events")
+@admin_required
 def api_create_event():
-    """Save a new event and its first ticket type from the frontend's JSON."""
+    """Save a new event and its first ticket type from an admin's JSON."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
@@ -256,6 +194,97 @@ def api_reserve_tickets(ticket_type_id):
         },
         "message": "Reservation created. It is not confirmed until payment is verified.",
     }), 201
+
+
+@app.get("/api/v1/admin/events")
+@admin_required
+def api_admin_event_sales():
+    """Show admins ticket capacity, confirmed sales, active holds, and tickets left."""
+    db = get_db()
+    expire_pending_reservations(db)
+    db.commit()
+    events = db.execute("SELECT id, name, venue, starts_at FROM events ORDER BY starts_at, id").fetchall()
+
+    result = []
+    for event in events:
+        rows = db.execute(
+            "SELECT t.id, t.name, t.price, t.capacity, "
+            "COALESCE(SUM(CASE WHEN o.status = 'confirmed' THEN o.quantity ELSE 0 END), 0) AS sold, "
+            "COALESCE(SUM(CASE WHEN o.status = 'pending' THEN o.quantity ELSE 0 END), 0) AS pending "
+            "FROM ticket_types t LEFT JOIN orders o ON o.ticket_type_id = t.id "
+            "WHERE t.event_id = ? GROUP BY t.id ORDER BY t.price, t.id",
+            (event["id"],),
+        ).fetchall()
+        ticket_types = []
+        for row in rows:
+            sold = row["sold"]
+            pending = row["pending"]
+            ticket_types.append({
+                "id": row["id"],
+                "name": row["name"],
+                "price": row["price"],
+                "capacity": row["capacity"],
+                "sold": sold,
+                "pending": pending,
+                "available": row["capacity"] - sold - pending,
+            })
+        result.append({
+            "id": event["id"],
+            "name": event["name"],
+            "venue": event["venue"],
+            "starts_at": event["starts_at"],
+            "ticket_types": ticket_types,
+        })
+    return jsonify({"events": result})
+
+
+@app.get("/api/v1/admin/events/<int:event_id>/reservations")
+@admin_required
+def api_admin_reservations(event_id):
+    """Show buyer and reservation details for one event, newest reservations first."""
+    db = get_db()
+    event = db.execute("SELECT id, name FROM events WHERE id = ?", (event_id,)).fetchone()
+    if event is None:
+        return jsonify({"error": "Event not found."}), 404
+
+    try:
+        limit = int(request.args.get("limit", "50"))
+        offset = int(request.args.get("offset", "0"))
+        if limit < 1 or limit > 100 or offset < 0:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "Use a limit from 1 to 100 and an offset of 0 or more."}), 400
+
+    expire_pending_reservations(db)
+    db.commit()
+    rows = db.execute(
+        "SELECT o.id, o.buyer_name, o.buyer_email, o.quantity, o.status, o.created_at, o.expires_at, "
+        "t.id AS ticket_type_id, t.name AS ticket_type "
+        "FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
+        "WHERE t.event_id = ? ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?",
+        (event_id, limit, offset),
+    ).fetchall()
+    total = db.execute(
+        "SELECT COUNT(*) FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
+        "WHERE t.event_id = ?",
+        (event_id,),
+    ).fetchone()[0]
+    reservations = [{
+        "id": row["id"],
+        "buyer_name": row["buyer_name"],
+        "buyer_email": row["buyer_email"],
+        "ticket_type_id": row["ticket_type_id"],
+        "ticket_type": row["ticket_type"],
+        "quantity": row["quantity"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "expires_at": row["expires_at"],
+    } for row in rows]
+    return jsonify({
+        "event": {"id": event["id"], "name": event["name"]},
+        "reservations": reservations,
+        "pagination": {"limit": limit, "offset": offset, "total": total},
+    })
 
 
 with app.app_context():
