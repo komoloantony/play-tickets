@@ -1,4 +1,4 @@
-  """SQLite setup and helper functions for Play Tickets."""
+"""SQLite setup and helper functions for Play Tickets."""
 
 import os
 import sqlite3
@@ -60,13 +60,33 @@ def init_db():
             quantity INTEGER NOT NULL CHECK(quantity > 0),
             status TEXT NOT NULL DEFAULT 'pending',
             created_at TEXT NOT NULL,
-            expires_at TEXT
+            expires_at TEXT,
+            payment_provider TEXT,
+            payment_phone TEXT,
+            payment_reference TEXT,
+            provider_checkout_id TEXT,
+            provider_transaction_id TEXT,
+            payment_amount INTEGER,
+            payment_currency TEXT,
+            payment_status TEXT NOT NULL DEFAULT 'not_started'
         );
         """
     )
     order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}
-    if "expires_at" not in order_columns:
-        db.execute("ALTER TABLE orders ADD COLUMN expires_at TEXT")
+    order_migrations = {
+        "expires_at": "TEXT",
+        "payment_provider": "TEXT",
+        "payment_phone": "TEXT",
+        "payment_reference": "TEXT",
+        "provider_checkout_id": "TEXT",
+        "provider_transaction_id": "TEXT",
+        "payment_amount": "INTEGER",
+        "payment_currency": "TEXT",
+        "payment_status": "TEXT NOT NULL DEFAULT 'not_started'",
+    }
+    for column, definition in order_migrations.items():
+        if column not in order_columns:
+            db.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
     # Old holds have no timer, so let them expire now and free their tickets.
     db.execute(
         "UPDATE orders SET expires_at = created_at WHERE status = 'pending' AND expires_at IS NULL"

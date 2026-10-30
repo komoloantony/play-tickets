@@ -1,6 +1,6 @@
 # Play Tickets Backend
 
-This folder contains the Python backend for Play Tickets. The frontend is the part people see and click; a teammate is building that separately. The backend stores events and reservations. The API is the messenger between the frontend and backend, and JSON is the simple text format they use to send information to each other.
+This folder contains the Python backend and the partner-built static frontend for Play Tickets. The backend stores events and reservations. The API is the messenger between the frontend and backend, and JSON is the simple text format they use to send information to each other.
 
 ## What each file is for
 
@@ -9,6 +9,7 @@ This folder contains the Python backend for Play Tickets. The frontend is the pa
 - **`database.py`** — The database helper file. It creates and connects to SQLite, builds the tables, and counts or expires ticket reservations.
 - **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
 - **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
+- **`../partner-frontend/`** — The partner's standalone HTML, CSS, and JavaScript website, copied alongside this backend project on the development laptop. It is not currently inside this repository checkout.
 - **`play_tickets.db`** — The local database where the app saves events, ticket types, and reservations. The app creates this file when it starts; it is not included in GitHub.
 
 ## Run locally
@@ -19,6 +20,19 @@ This folder contains the Python backend for Play Tickets. The frontend is the pa
 4. Check that it is responding at `http://127.0.0.1:5000/api/v1/health`.
 
 SQLite creates `play_tickets.db` automatically. It is a small local database that stores events and reservations. Git does not upload the local database or private settings. Admin routes and event creation require a shared secret token for development; this is not a full sign-in system, so the API is not ready to open publicly as-is.
+
+## Frontend
+
+The partner frontend is currently in the sibling `partner-frontend/` folder: `index.html` is the event listing, `event.html` is the event detail page, and the CSS and JavaScript files provide its styling and demo interactions. From the backend project's folder, preview it with:
+
+```powershell
+Set-Location ..\partner-frontend
+python -m http.server 8000
+```
+
+Then open `http://127.0.0.1:8000/` in a browser. The event page loads a QR-code library from a CDN, so an internet connection is needed for that feature.
+
+This frontend is currently a standalone prototype. Its event data and checkout interactions are demo behavior; it does not yet call the Flask API or initiate real M-Pesa or Airtel payments. The API details below describe the backend endpoints available for a future connection.
 
 ## API for the frontend
 
@@ -31,6 +45,8 @@ All API routes use the `/api/v1` prefix and exchange JSON.
 | `GET` | `/api/v1/events/<event_id>` | Get one event and its ticket types. |
 | `POST` | `/api/v1/events` | Create an event and its first ticket type (admin token required). |
 | `POST` | `/api/v1/ticket-types/<ticket_type_id>/reservations` | Hold tickets while the buyer completes payment. |
+| `POST` | `/api/v1/sandbox/payments/<payment_reference>/result` | Simulate a payment result while sandbox mode is enabled (admin token required). |
+| `POST` | `/api/v1/sandbox/callbacks/<provider>/<callback_token>` | Receive a token-protected mock callback through an HTTPS tunnel. |
 | `GET` | `/api/v1/admin/events` | Show each event's ticket capacity, confirmed sales, active holds, and tickets left (admin token required). |
 | `GET` | `/api/v1/admin/events/<event_id>/reservations` | Show buyers and their reservation details for one event (admin token required). |
 
@@ -85,12 +101,30 @@ Send JSON to the reservation endpoint:
 
 A successful response is `201 Created` and includes a reservation ID, `status: "pending"`, and an `expires_at` timestamp. A pending reservation holds its tickets for 15 minutes. If inventory is insufficient, the API responds with `409 Conflict` and the remaining quantity. A reservation is not a confirmed payment or an entry-ready ticket.
 
+### Local payment sandbox
+
+Set `PLAY_TICKETS_PAYMENT_MODE` to `sandbox` and configure the admin token before starting the app. Reservation requests must include `payment_provider` (`mpesa` or `airtel`) and a Kenyan mobile number in `payment_phone`. Amounts are recorded in whole Kenyan shillings (KES).
+
+To simulate a successful or failed provider result, send an admin-authenticated request:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:5000/api/v1/sandbox/payments/PT-REFERENCE/result" `
+  -Headers @{ Authorization = "Bearer $env:PLAY_TICKETS_ADMIN_TOKEN" } `
+  -ContentType "application/json" `
+  -Body '{"result":"success"}'
+```
+
+The local simulator does not contact either provider or move money. Set a random `PLAY_TICKETS_SANDBOX_CALLBACK_TOKEN` to enable the tunnel callback route. Its JSON body must contain the reservation's `payment_reference` and `result` (`success` or `failure`). This mock callback is not the payload format used by Safaricom or Airtel.
+
+An HTTPS tunnel URL is temporary and works only while both the local Flask app and tunnel process are running. A production callback needs a deployed HTTPS service and provider-specific callback verification.
+
 ## Current state and next work
 
 - The backend uses **Python**, **Flask**, and **SQLite**.
 - Event and ticket records are stored locally in SQLite.
 - The backend checks and holds tickets together, so two buyers cannot both reserve the very last ticket at the same time.
-- M-Pesa and Airtel Money are not connected yet. The launch country and payment provider setup must be chosen before implementing provider-specific payment requests and verified callbacks.
+- The launch market is Kenya and prices use Kenyan shillings (KES). The local sandbox can simulate M-Pesa and Airtel payment results, but it does not contact the providers or move money. Provider payment requests and verified callbacks still need implementation.
 - Add sign-in before allowing organizers to create events on a public website.
 
 See `app.py` for API route comments and `database.py` for how the database and its tables work.
