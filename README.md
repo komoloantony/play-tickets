@@ -9,7 +9,7 @@ This folder contains the Python backend and the partner-built static frontend fo
 - **`database.py`** — The database helper file. It creates and connects to SQLite, builds the tables, and counts or expires ticket reservations.
 - **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
 - **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
-- **`../partner-frontend/`** — The partner's standalone HTML, CSS, and JavaScript website, copied alongside this backend project on the development laptop. It is not currently inside this repository checkout.
+- **`Frontend/`** — The partner's standalone HTML, CSS, and JavaScript website, including the event listing and event detail pages.
 - **`play_tickets.db`** — The local database where the app saves events, ticket types, and reservations. The app creates this file when it starts; it is not included in GitHub.
 
 ## Run locally
@@ -23,10 +23,10 @@ SQLite creates `play_tickets.db` automatically. It is a small local database tha
 
 ## Frontend
 
-The partner frontend is currently in the sibling `partner-frontend/` folder: `index.html` is the event listing, `event.html` is the event detail page, and the CSS and JavaScript files provide its styling and demo interactions. From the backend project's folder, preview it with:
+The partner frontend lives in `Frontend/`: `index.html` is the event listing, `event.html` is the event detail page, and the CSS and JavaScript files provide its styling and demo interactions. From the project root, preview it with:
 
 ```powershell
-Set-Location ..\partner-frontend
+Set-Location Frontend
 python -m http.server 8000
 ```
 
