@@ -23,16 +23,16 @@ SQLite creates `play_tickets.db` automatically. It is a small local database tha
 
 ## Frontend
 
-The partner frontend lives in `Frontend/`: `index.html` is the event listing, `event.html` is the event detail page, and the CSS and JavaScript files provide its styling and demo interactions. From the project root, preview it with:
+The partner frontend lives in `Frontend/`: `index.html` loads events from the API and `event.html` creates ticket reservations. From the project root, start the frontend's local web server in a second PowerShell window:
 
 ```powershell
 Set-Location Frontend
 python -m http.server 8000
 ```
 
-Then open `http://127.0.0.1:8000/` in a browser. The event page loads a QR-code library from a CDN, so an internet connection is needed for that feature.
+Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requests from `localhost:8000` and `127.0.0.1:8000` by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create an event with the admin API before booking it.
 
-This frontend is currently a standalone prototype. Its event data and checkout interactions are demo behavior; it does not yet call the Flask API or initiate real M-Pesa or Airtel payments. The API details below describe the backend endpoints available for a future connection.
+Checkout behavior is in `Frontend/checkout.js`; `Frontend/event.js` loads and displays event details. Checkout creates a 15-minute reservation and shows its payment reference and amount. In sandbox mode, the page offers success and failure buttons; each asks for the local admin token and calls the protected simulation endpoint. Sandbox payments do not contact M-Pesa or Airtel, collect money, or issue entry tickets or QR codes.
 
 ## API for the frontend
 
@@ -95,7 +95,9 @@ Send JSON to the reservation endpoint:
 {
   "buyer_name": "Amina",
   "buyer_email": "amina@example.com",
-  "quantity": 2
+  "quantity": 2,
+  "payment_provider": "mpesa",
+  "payment_phone": "0712345678"
 }
 ```
 
@@ -103,7 +105,15 @@ A successful response is `201 Created` and includes a reservation ID, `status: "
 
 ### Local payment sandbox
 
-Set `PLAY_TICKETS_PAYMENT_MODE` to `sandbox` and configure the admin token before starting the app. Reservation requests must include `payment_provider` (`mpesa` or `airtel`) and a Kenyan mobile number in `payment_phone`. Amounts are recorded in whole Kenyan shillings (KES).
+Set sandbox mode and an admin token before starting the backend in the first PowerShell window:
+
+```powershell
+$env:PLAY_TICKETS_PAYMENT_MODE = "sandbox"
+$env:PLAY_TICKETS_ADMIN_TOKEN = "use-a-long-private-random-value"
+python app.py
+```
+
+Reservation requests must include `payment_provider` (`mpesa` or `airtel`) and a Kenyan mobile number in `payment_phone`. Amounts are recorded in whole Kenyan shillings (KES). Create an event with the admin-only API before opening its checkout page.
 
 To simulate a successful or failed provider result, send an admin-authenticated request:
 

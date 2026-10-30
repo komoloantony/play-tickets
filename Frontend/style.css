@@ -320,6 +320,11 @@ a {
   background: var(--surface);
 }
 
+.event-list {
+  display: grid;
+  gap: 28px;
+}
+
 .event-cover {
   position: relative;
   min-height: 370px;

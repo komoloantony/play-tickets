@@ -23,6 +23,26 @@ app.config["SECRET_KEY"] = os.environ.get("PLAY_TICKETS_SECRET", "local-developm
 app.teardown_appcontext(close_db)
 
 
+@app.after_request
+def add_local_frontend_cors(response):
+    """Allow the separately served local frontend to call the API during development."""
+    origin = request.headers.get("Origin")
+    allowed_origins = {
+        value.strip()
+        for value in os.environ.get(
+            "PLAY_TICKETS_CORS_ORIGINS",
+            "http://127.0.0.1:8000,http://localhost:8000",
+        ).split(",")
+        if value.strip()
+    }
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        response.headers["Vary"] = "Origin"
+    return response
+
+
 def admin_required(view):
     """Only let requests with the private admin token open buyer records."""
     @wraps(view)
