@@ -1,0 +1,164 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firebrand Play | Firebrand Tickets</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="event.css">
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="event.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">F</span>
+      <span>FIREBRAND <small>TICKETS</small></span>
+    </a>
+    <a class="header-button" href="index.html">← Back home</a>
+  </header>
+
+  <main class="event-page">
+    <a class="back-link" href="index.html">← All events</a>
+
+    <section class="event-detail-layout">
+      <div class="event-detail-poster">
+        <p class="poster-top">FIREBRAND PRESENTS</p>
+        <div class="poster-line"></div>
+        <p class="poster-small">AN UNFORGETTABLE EXPERIENCE</p>
+        <h1>FIREBRAND<br><span>PLAY</span></h1>
+        <div class="poster-line"></div>
+        <p class="poster-bottom">ONE STAGE. ONE STORY. ONE EXPERIENCE.</p>
+      </div>
+
+      <div class="event-detail-content">
+        <p class="eyebrow">FEATURED PERFORMANCE</p>
+        <h2>Firebrand Play</h2>
+        
+<p class="event-detail-intro">
+  Firebrand Play is a Christian/gospel event taking place on
+  13 December 2026 at Jesus Is Alive Ministries. Join us for
+  this upcoming event. Further programme details will be
+  announced by the organisers.
+</p>
+
+
+        
+<div class="detail-list">
+  <div>
+    <span>Event type</span>
+    <strong>Christian / Gospel Event</strong>
+  </div>
+  <div>
+    <span>Date</span>
+    <strong>Sunday, 13 December 2026</strong>
+  </div>
+  <div>
+    <span>Time</span>
+    <strong>3:00 PM (1500 hrs)</strong>
+  </div>
+  <div>
+    <span>Venue</span>
+    <strong>Jesus Is Alive Ministries</strong>
+  </div>
+  <div>
+    <span>Ticket price</span>
+    <strong>KSh 100 per person</strong>
+  </div>
+</div>
+
+
+       
+<p class="event-detail-note">
+  Ticket price: KSh 100 per person. Please confirm the exact
+  venue location and any additional programme details with
+  the organisers before attending.
+</p>
+
+        
+<button class="primary-button book-event-button" id="book-event" type="button">
+  Book tickets ↗
+</button>
+
+<p class="booking-feedback" id="booking-feedback" role="status"></p>
+
+<form class="booking-form" id="booking-form" hidden>
+  <h3>Reserve your tickets</h3>
+  <p>Enter your details to continue.</p>
+
+<label for="attendee-name">Full name</label>
+<input
+  id="attendee-name"
+  name="name"
+  type="text"
+  placeholder="Enter your full name"
+  autocomplete="name"
+  required
+>
+
+<label for="attendee-email">Email address</label>
+<input
+  id="attendee-email"
+  name="email"
+  type="email"
+  placeholder="you@example.com"
+  autocomplete="email"
+  required
+>
+
+  <label for="ticket-quantity">Number of tickets</label>
+  <select id="ticket-quantity" name="quantity" required>
+    <option value="1">1 ticket</option>
+    <option value="2">2 tickets</option>
+    <option value="3">3 tickets</option>
+    <option value="4">4 tickets</option>
+    <option value="5">5 tickets</option>
+  </select>
+  
+<div class="attendee-details-section">
+  <h3>Who is attending?</h3>
+  <p>Enter the name and email of each ticket holder.</p>
+  <div id="attendee-fields"></div>
+</div>
+
+
+  <label for="mpesa-phone">M-Pesa phone number</label>
+  <input
+    id="mpesa-phone"
+    name="phone"
+    type="tel"
+    placeholder="e.g. 0712345678"
+    pattern="(?:07|01)[0-9]{8}"
+    maxlength="10"
+    required
+  >
+
+  <button class="primary-button" type="submit">
+    Continue to payment
+  </button>
+
+  <p id="payment-feedback" class="booking-feedback" role="status"></p>
+</form>
+
+      </div>
+    </section>
+    
+<section class="ticket-results" id="ticket-results" hidden>
+  <h2>Your demo tickets</h2>
+  <p>Each ticket has its own unique QR code and download option.</p>
+  <div id="ticket-list" class="ticket-list"></div>
+</section>
+
+  </main>
+
+  <footer class="site-footer">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">F</span>
+      <span>FIREBRAND <small>TICKETS</small></span>
+    </a>
+    <p>Every ticket opens a new experience.</p>
+    <span>© 2026 Firebrand Tickets</span>
+  </footer>
+</body>
+</html>
