@@ -1,0 +1,306 @@
+
+.event-page {
+  min-height: 70vh;
+  padding: 35px 9% 75px;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 28px;
+  color: var(--gold);
+  font-size: 13px;
+}
+
+.event-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.8fr) minmax(0, 1.2fr);
+  gap: 55px;
+  align-items: center;
+}
+
+.event-detail-poster {
+  min-height: 450px;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px solid var(--gold);
+  background: radial-gradient(ellipse at center, #493512, #17130c 65%, #0b0b0a);
+  box-shadow: 0 20px 60px #0008;
+}
+
+.event-detail-poster h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(36px, 5vw, 58px);
+  line-height: 1.1;
+  letter-spacing: 2px;
+}
+
+.event-detail-poster h1 span {
+  color: var(--gold-light);
+}
+
+.event-detail-poster .poster-top,
+.event-detail-poster .poster-small,
+.event-detail-poster .poster-bottom {
+  color: var(--gold-light);
+  font-size: 9px;
+  letter-spacing: 2px;
+}
+
+.event-detail-poster .poster-line {
+  width: 55px;
+  height: 1px;
+  margin: 22px 0;
+  background: var(--gold);
+}
+
+.event-detail-content h2 {
+  margin: 12px 0;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: clamp(34px, 4vw, 48px);
+  font-weight: 500;
+}
+
+.event-detail-intro {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.detail-list {
+  margin: 25px 0;
+  border-top: 1px solid var(--border);
+}
+
+.detail-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.detail-list span {
+  color: var(--muted);
+}
+
+.detail-list strong {
+  text-align: right;
+  font-weight: 500;
+}
+
+.event-detail-note {
+  margin-bottom: 22px;
+  color: #c8b98d;
+  font-size: 11px;
+}
+
+.book-event-button {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.booking-feedback {
+  margin-top: 12px;
+  color: var(--gold-light);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .event-page {
+    padding: 25px 6% 50px;
+  }
+
+  .event-detail-layout {
+    grid-template-columns: 1fr;
+    gap: 35px;
+  }
+
+  .event-detail-poster {
+    min-height: 350px;
+  }
+}
+
+.booking-form {
+  margin-top: 25px;
+  padding: 24px;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.booking-form[hidden] {
+  display: none;
+}
+
+.booking-form h3 {
+  margin-bottom: 8px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 25px;
+}
+
+.booking-form > p {
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.booking-form label {
+  display: block;
+  margin: 16px 0 8px;
+  font-size: 13px;
+}
+
+.booking-form input,
+.booking-form select {
+  width: 100%;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #090909;
+  color: #ffffff;
+  font: inherit;
+}
+
+.booking-form input:focus,
+.booking-form select:focus {
+  outline: 1px solid var(--gold);
+}
+
+.booking-form button {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.ticket-results {
+  margin: 45px 0;
+  padding: 25px;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.ticket-results[hidden] {
+  display: none;
+}
+
+.ticket-results h2 {
+  font-family: 'Playfair Display', Georgia, serif;
+  margin-bottom: 8px;
+}
+
+.ticket-results > p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 25px;
+}
+
+.ticket-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 20px;
+}
+
+.ticket-card {
+  padding: 22px;
+  background: #0b0b0b;
+  color: #fff;
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.ticket-card h3 {
+  color: var(--gold-light);
+  font-family: 'Playfair Display', Georgia, serif;
+  margin-bottom: 12px;
+}
+
+.ticket-card p {
+  margin: 8px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ticket-qr {
+  display: flex;
+  justify-content: center;
+  margin: 18px auto;
+  padding: 10px;
+  background: white;
+  width: fit-content;
+}
+
+.ticket-qr img,
+.ticket-qr canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.ticket-download {
+  margin-top: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--gold);
+  color: #090909;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.demo-warning {
+  color: #e5c97e;
+  font-size: 11px;
+  margin-top: 12px;
+}
+
+.attendee-details-section {
+  margin-top: 25px;
+}
+
+.attendee-details-section h3 {
+  margin-bottom: 8px;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 23px;
+}
+
+.attendee-details-section > p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+.attendee-field-group {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b0b0b;
+}
+
+.attendee-field-group h4 {
+  margin-bottom: 12px;
+  color: var(--gold-light);
+  font-size: 15px;
+}
+
+.attendee-field-group label {
+  display: block;
+  margin: 12px 0 7px;
+  font-size: 13px;
+}
+
+.attendee-field-group input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #090909;
+  color: #fff;
+  font: inherit;
+}
