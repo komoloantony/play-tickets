@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Firebrand Tickets event sales and reservation review.">
+  <title>Admin review | Firebrand Tickets</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="admin.css">
+  <script src="admin.js" defer></script>
+</head>
+<body class="admin-page">
+  <header class="site-header admin-header">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">F</span><span>FIREBRAND <small>TICKETS</small></span>
+    </a>
+    <a class="text-button" href="index.html">← Back to website</a>
+  </header>
+
+  <main class="admin-main">
+    <section class="admin-heading">
+      <div>
+        <p class="eyebrow">ORGANISER TOOLS</p>
+        <h1>Admin <span>review</span></h1>
+        <p class="admin-subtitle">Review event capacity, confirmed sales and recent reservations.</p>
+      </div>
+      <span class="admin-status"><span></span> PRIVATE ADMIN VIEW</span>
+    </section>
+
+    <form class="admin-access" id="admin-access">
+      <div>
+        <label for="admin-token">Admin token</label>
+        <p>Your token stays in this browser tab and is sent only to the local API.</p>
+      </div>
+      <input id="admin-token" type="password" autocomplete="current-password" placeholder="Enter admin token" required>
+      <button class="primary-button" type="submit">Load dashboard</button>
+    </form>
+    <p class="admin-message" id="admin-message" role="status" aria-live="polite">Enter the admin token configured for the backend to view private data.</p>
+
+    <section id="dashboard" hidden>
+      <div class="admin-toolbar">
+        <div><p class="eyebrow">OVERVIEW</p><h2>Event performance</h2></div>
+        <button class="refresh-button" id="refresh-dashboard" type="button">Refresh data</button>
+      </div>
+      <div class="admin-metrics" id="admin-metrics"></div>
+      <section class="admin-panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">BUYER ACTIVITY</p><h2>Reservations</h2></div>
+          <label class="event-picker-label" for="event-picker">Event</label>
+          <select id="event-picker" aria-label="Choose event"></select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Buyer</th><th>Tickets</th><th>Payment</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody id="reservation-rows"></tbody>
+          </table>
+          <p class="empty-state" id="empty-reservations" hidden>No reservations found for this event.</p>
+        </div>
+        <p class="table-note" id="reservation-count"></p>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

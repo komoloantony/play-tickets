@@ -1,0 +1,52 @@
+.admin-page { min-height: 100vh; }
+.admin-header { padding-inline: max(5%, calc((100% - 1320px) / 2)); }
+.admin-main { width: min(1320px, 90%); margin: 0 auto; padding: 64px 0 90px; }
+.admin-heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 34px; }
+.admin-heading h1 { margin: 8px 0; font: 500 clamp(38px, 5vw, 58px)/1.1 'Playfair Display', Georgia, serif; }
+.admin-heading h1 span { color: var(--gold); }
+.admin-subtitle { color: var(--muted); }
+.admin-status { display: inline-flex; align-items: center; gap: 9px; color: var(--gold-light); font-size: 10px; letter-spacing: 1.5px; white-space: nowrap; }
+.admin-status span { width: 7px; height: 7px; border-radius: 50%; background: #8bc28b; box-shadow: 0 0 12px #8bc28b88; }
+.admin-access { display: grid; grid-template-columns: 1fr minmax(220px, 330px) auto; align-items: end; gap: 16px; padding: 22px; border: 1px solid var(--border); background: var(--surface); }
+.admin-access label, .event-picker-label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 700; }
+.admin-access p, .table-note { color: var(--muted); font-size: 12px; }
+.admin-access input, #event-picker { min-height: 44px; padding: 10px 12px; border: 1px solid #51472f; background: #0d0d0c; color: var(--text); font: inherit; }
+.admin-access input:focus, #event-picker:focus { outline: 1px solid var(--gold); }
+.admin-access button, .refresh-button { min-height: 44px; border: 0; cursor: pointer; font: inherit; }
+.admin-message { min-height: 28px; padding: 10px 0 20px; color: var(--muted); font-size: 13px; }
+.admin-message.error { color: #f29a8c; }
+.admin-message.success { color: #a5d5a1; }
+.admin-toolbar, .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.admin-toolbar { margin: 24px 0 18px; }
+.admin-toolbar h2, .panel-heading h2 { font: 500 26px 'Playfair Display', Georgia, serif; }
+.refresh-button { padding: 0 16px; border: 1px solid var(--border); background: var(--surface); color: var(--gold-light); }
+.refresh-button:hover { border-color: var(--gold); }
+.admin-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 22px; }
+.metric-card { min-height: 120px; padding: 20px; border: 1px solid var(--border); background: linear-gradient(140deg, #171612, #10100f); }
+.metric-card span { display: block; color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+.metric-card strong { display: block; margin-top: 9px; color: var(--gold-light); font: 500 30px 'Playfair Display', Georgia, serif; }
+.admin-panel { border: 1px solid var(--border); background: var(--surface); }
+.panel-heading { padding: 21px 22px; border-bottom: 1px solid var(--border); }
+.event-picker-label { margin: 0 0 0 auto; color: var(--muted); }
+#event-picker { min-width: min(300px, 45vw); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+th { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+th, td { padding: 14px 16px; border-bottom: 1px solid #28251e; white-space: nowrap; }
+td:first-child { min-width: 210px; white-space: normal; }
+td small { display: block; color: var(--muted); }
+.status-pill { display: inline-block; padding: 4px 9px; border: 1px solid #74602f; color: var(--gold-light); font-size: 10px; text-transform: capitalize; }
+.status-pill.confirmed { border-color: #3c6b45; color: #a5d5a1; }
+.status-pill.failed, .status-pill.cancelled, .status-pill.expired { border-color: #70423c; color: #f29a8c; }
+.empty-state { padding: 30px; color: var(--muted); text-align: center; }
+.table-note { padding: 12px 16px; }
+@media (max-width: 760px) {
+  .admin-main { padding-top: 42px; }
+  .admin-heading { align-items: start; flex-direction: column; }
+  .admin-access { grid-template-columns: 1fr; }
+  .admin-access button { width: 100%; }
+  .admin-metrics { grid-template-columns: repeat(2, 1fr); }
+  .panel-heading { flex-wrap: wrap; }
+  .event-picker-label { margin-left: 0; }
+  #event-picker { flex: 1; min-width: 180px; }
+}

@@ -34,6 +34,10 @@ Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requ
 
 Checkout behavior is in `Frontend/checkout.js`; `Frontend/event.js` loads and displays event details. Checkout creates a 15-minute reservation and shows its payment reference and amount. In sandbox mode, the page offers success and failure buttons; each asks for the local admin token and calls the protected simulation endpoint. Sandbox payments do not contact M-Pesa or Airtel, collect money, or issue entry tickets or QR codes.
 
+### Admin review page
+
+With the backend and frontend servers running, open `http://127.0.0.1:8000/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations. The token is held in browser memory for this tab and is not saved in the frontend files.
+
 ## API for the frontend
 
 All API routes use the `/api/v1` prefix and exchange JSON.
