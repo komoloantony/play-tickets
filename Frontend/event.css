@@ -199,6 +199,16 @@
   margin-bottom: 25px;
 }
 
+.ticket-results button {
+  margin: 8px 10px 8px 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sandbox-failure-button {
+  color: var(--gold-light);
+}
+
 .ticket-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

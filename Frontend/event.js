@@ -1,25 +1,68 @@
-
 "use strict";
 
-// Booking form elements
 const bookButton = document.getElementById("book-event");
 const bookingForm = document.getElementById("booking-form");
 const bookingFeedback = document.getElementById("booking-feedback");
 const paymentFeedback = document.getElementById("payment-feedback");
 
-const nameInput = document.getElementById("attendee-name");
-const emailInput = document.getElementById("attendee-email");
 const quantityInput = document.getElementById("ticket-quantity");
 const phoneInput = document.getElementById("mpesa-phone");
 
+const attendeeFields = document.getElementById("attendee-fields");
 const ticketResults = document.getElementById("ticket-results");
 const ticketList = document.getElementById("ticket-list");
 
-const TICKET_PRICE = 100;
+function createAttendeeFields() {
+  const quantity = Number(quantityInput.value);
 
-// Open booking form
+  attendeeFields.replaceChildren();
+
+  for (let i = 0; i < quantity; i++) {
+    const section = document.createElement("div");
+    section.className = "attendee-field-group";
+
+    const heading = document.createElement("h4");
+    heading.textContent = `Attendee ${i + 1}`;
+
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "Full name";
+    nameLabel.htmlFor = `attendee-name-${i}`;
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.id = `attendee-name-${i}`;
+    nameInput.name = `attendeeName${i}`;
+    nameInput.placeholder = "Enter full name";
+    nameInput.autocomplete = "name";
+    nameInput.required = true;
+
+    const emailLabel = document.createElement("label");
+    emailLabel.textContent = "Email address";
+    emailLabel.htmlFor = `attendee-email-${i}`;
+
+    const emailInput = document.createElement("input");
+    emailInput.type = "email";
+    emailInput.id = `attendee-email-${i}`;
+    emailInput.name = `attendeeEmail${i}`;
+    emailInput.placeholder = "person@example.com";
+    emailInput.autocomplete = "email";
+    emailInput.required = true;
+
+    section.append(
+      heading,
+      nameLabel,
+      nameInput,
+      emailLabel,
+      emailInput
+    );
+
+    attendeeFields.appendChild(section);
+  }
+}
+
 bookButton.addEventListener("click", () => {
   bookingForm.hidden = false;
+  createAttendeeFields();
 
   bookingForm.scrollIntoView({
     behavior: "smooth",
@@ -29,146 +72,42 @@ bookButton.addEventListener("click", () => {
   bookingFeedback.textContent = "";
 });
 
-// Generate unique IDs
-function generateTicketId() {
-  return "FB-" + crypto.randomUUID().toUpperCase();
-}
+quantityInput.addEventListener("change", createAttendeeFields);
 
-// Protect ticket text from HTML injection
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, char => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[char]);
-}
+bookingForm.addEventListener("submit", (event) => {
+  event.preventDefault();
 
-// Generate one downloadable ticket
-function downloadTicket(ticket) {
-  const qrContainer = ticket.qrContainer;
+  if (!bookingForm.reportValidity()) return;
 
-  const canvas = qrContainer.querySelector("canvas");
-  const image = qrContainer.querySelector("img");
+  const quantity = Number(quantityInput.value);
+  const phone = phoneInput.value.trim();
 
-  let qrData;
-
-  if (canvas) {
-    qrData = canvas.toDataURL("image/png");
-  } else if (image) {
-    qrData = image.src;
-  } else {
-    alert("QR code is not ready. Please try again.");
+  if (!/^(07|01)\d{8}$/.test(phone)) {
+    paymentFeedback.textContent =
+      "Enter a valid Kenyan phone number, e.g. 0712345678.";
     return;
   }
 
-  const ticketHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Firebrand Play Ticket</title>
+  if (typeof QRCode === "undefined") {
+    paymentFeedback.textContent =
+      "QR library not loaded. Check your internet connection and refresh.";
+    return;
+  }
 
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #090909;
-  color: #fff;
-  padding: 24px;
-}
-
-.ticket {
-  max-width: 420px;
-  margin: 20px auto;
-  padding: 24px;
-  border: 2px solid #d8b45a;
-  text-align: center;
-}
-
-h1 {
-  color: #f3d98b;
-}
-
-img {
-  width: 200px;
-  height: 200px;
-  background: #fff;
-  padding: 8px;
-}
-
-p {
-  overflow-wrap: anywhere;
-}
-
-.warning {
-  color: #e5c97e;
-  font-weight: bold;
-  font-size: 12px;
-}
-
-@media print {
-  body { padding: 0; }
-  .ticket { margin: auto; }
-}
-</style>
-</head>
-
-<body>
-<div class="ticket">
-
-  <h1>FIREBRAND PLAY</h1>
-  <p>FIREBRAND TICKETS</p>
-
-  <p><strong>Purchaser:</strong>
-  ${escapeHtml(ticket.purchaserName)}</p>
-
-  <p><strong>Ticket ID:</strong>
-  ${escapeHtml(ticket.id)}</p>
-
-  <p><strong>Date:</strong> Sunday, 13 December 2026</p>
-  <p><strong>Time:</strong> 3:00 PM</p>
-  <p><strong>Venue:</strong> Jesus Is Alive Ministries</p>
-  <p><strong>Price:</strong> KSh ${TICKET_PRICE}</p>
-
-  <img src="${qrData}" alt="Unique ticket QR code">
-
-  <p class="warning">
-    DEMO TICKET — NOT VALID FOR ENTRY
-  </p>
-
-</div>
-</body>
-</html>`;
-
-  const file = new Blob([ticketHtml], {
-    type: "text/html;charset=utf-8"
-  });
-
-  const fileUrl = URL.createObjectURL(file);
-  const link = document.createElement("a");
-
-  link.href = fileUrl;
-  link.download = ticket.id + ".html";
-
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
-}
-
-// Create individual tickets for one purchaser
-function generateTickets(purchaser, quantity) {
-  ticketList.replaceChildren();
+  const attendees = [];
 
   for (let i = 0; i < quantity; i++) {
+    const name = document.getElementById(`attendee-name-${i}`).value.trim();
+    const email = document.getElementById(`attendee-email-${i}`).value.trim();
 
-    const ticket = {
-      id: generateTicketId(),
-      purchaserName: purchaser.name,
-      qrContainer: null
-    };
+    attendees.push({ name, email });
+  }
+
+  ticketList.replaceChildren();
+  ticketResults.hidden = false;
+
+  attendees.forEach((attendee) => {
+    const ticketId = "FB-" + crypto.randomUUID().toUpperCase();
 
     const card = document.createElement("article");
     card.className = "ticket-card";
@@ -180,23 +119,20 @@ function generateTickets(purchaser, quantity) {
     warning.className = "demo-warning";
     warning.textContent = "DEMO TICKET — NOT VALID FOR ENTRY";
 
-    const numberLine = document.createElement("p");
-    numberLine.textContent = "Ticket " + (i + 1) + " of " + quantity;
-
     const idLine = document.createElement("p");
-    idLine.textContent = "Ticket ID: " + ticket.id;
+    idLine.textContent = "Ticket ID: " + ticketId;
 
-    const purchaserLine = document.createElement("p");
-    purchaserLine.textContent =
-      "Purchased by: " + purchaser.name;
+    const nameLine = document.createElement("p");
+    nameLine.textContent = "Attendee: " + attendee.name;
+
+    const emailLine = document.createElement("p");
+    emailLine.textContent = "Email: " + attendee.email;
 
     const qrContainer = document.createElement("div");
     qrContainer.className = "ticket-qr";
 
-    ticket.qrContainer = qrContainer;
-
     new QRCode(qrContainer, {
-      text: ticket.id,
+      text: ticketId,
       width: 180,
       height: 180,
       correctLevel: QRCode.CorrectLevel.M
@@ -205,72 +141,99 @@ function generateTickets(purchaser, quantity) {
     const downloadButton = document.createElement("button");
     downloadButton.className = "ticket-download";
     downloadButton.type = "button";
-    downloadButton.textContent = "Download Ticket";
+    downloadButton.textContent = "Download ticket";
 
     downloadButton.addEventListener("click", () => {
-      downloadTicket(ticket);
+      const canvas = qrContainer.querySelector("canvas");
+      const image = qrContainer.querySelector("img");
+
+      let qrData;
+
+      if (canvas) {
+        qrData = canvas.toDataURL("image/png");
+      } else if (image) {
+        qrData = image.src;
+      } else {
+        alert("QR code is not ready. Please try again.");
+        return;
+      }
+
+      const escapeHtml = (value) =>
+        value.replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;"
+        })[char]);
+
+      const ticketHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firebrand Play Ticket</title>
+<style>
+body{font-family:Arial,sans-serif;background:#090909;color:#fff;padding:24px}
+.ticket{max-width:420px;margin:20px auto;padding:24px;border:2px solid #d8b45a;text-align:center}
+h1{color:#f3d98b}
+img{width:200px;height:200px;background:#fff;padding:8px}
+p{overflow-wrap:anywhere}
+.warning{color:#e5c97e;font-weight:bold;font-size:12px}
+@media print{body{padding:0}.ticket{margin:auto}}
+</style>
+</head>
+<body>
+<div class="ticket">
+<h1>FIREBRAND PLAY</h1>
+<p>FIREBRAND TICKETS</p>
+<p><strong>Attendee:</strong> ${escapeHtml(attendee.name)}</p>
+<p><strong>Email:</strong> ${escapeHtml(attendee.email)}</p>
+<p><strong>Ticket ID:</strong> ${ticketId}</p>
+<img src="${qrData}" alt="Ticket QR code">
+<p class="warning">DEMO TICKET — NOT VALID FOR ENTRY</p>
+<p>Event date, venue and price to be confirmed.</p>
+</div>
+</body>
+</html>`;
+
+      const file = new Blob([ticketHtml], {
+        type: "text/html;charset=utf-8"
+      });
+
+      const fileUrl = URL.createObjectURL(file);
+      const link = document.createElement("a");
+
+      link.href = fileUrl;
+      link.download = ticketId + ".html";
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
     });
 
     card.append(
       title,
       warning,
-      numberLine,
       idLine,
-      purchaserLine,
+      nameLine,
+      emailLine,
       qrContainer,
       downloadButton
     );
 
     ticketList.appendChild(card);
-  }
+  });
 
-  ticketResults.hidden = false;
+  paymentFeedback.textContent =
+    "Demo tickets created. Payment has not been requested or verified.";
 
   ticketResults.scrollIntoView({
     behavior: "smooth",
     block: "start"
   });
-}
-
-// Process booking form
-bookingForm.addEventListener("submit", event => {
-  event.preventDefault();
-
-  if (!bookingForm.reportValidity()) return;
-
-  const purchaser = {
-    name: nameInput.value.trim(),
-    email: emailInput.value.trim(),
-    phone: phoneInput.value.trim()
-  };
-
-  const quantity = Number(quantityInput.value);
-
-  if (!/^(07|01)\d{8}$/.test(purchaser.phone)) {
-    paymentFeedback.textContent =
-      "Enter a valid Kenyan phone number, e.g. 0712345678.";
-    return;
-  }
-
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5) {
-    paymentFeedback.textContent =
-      "Please select between 1 and 5 tickets.";
-    return;
-  }
-
-  if (typeof QRCode === "undefined") {
-    paymentFeedback.textContent =
-      "QR library not loaded. Check your internet connection and refresh.";
-    return;
-  }
-
-  const total = quantity * TICKET_PRICE;
-
-  paymentFeedback.textContent =
-    `Booking total: KSh ${total}. Generating ${quantity} individual demo tickets...`;
-
-  generateTickets(purchaser, quantity);
-
-  paymentFeedback.textContent =
-    `Demo booking prepared for ${quantity} ticket(s). Total: KSh ${total}. Payment has NOT been requested or verified.`;
 });
+
+createAttendeeFields();

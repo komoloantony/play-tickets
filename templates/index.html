@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Find an event · Play Tickets{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy"><p class="eyebrow">YOUR NEXT NIGHT OUT STARTS HERE</p><h1>Find your<br><em>next moment.</em></h1><p class="hero-intro">Discover plays and live events. Pick your seats, book your tickets, and get ready for a good night.</p><a class="button" href="#events">Explore events <span>↓</span></a></div>
+  <div class="hero-art" aria-label="Illustration of a stage spotlight"><div class="spotlight"></div><div class="stage"><span>LIVE</span><span>TONIGHT</span></div><div class="seat seat-one"></div><div class="seat seat-two"></div><div class="seat seat-three"></div></div>
+  <div class="hero-note">A LITTLE MORE<br>LIVE IN YOUR LIFE <span>✳</span></div>
+</section>
+<section class="events-section" id="events">
+  <div class="section-heading"><div><p class="eyebrow">THE GOOD STUFF</p><h2>Coming up</h2></div><span class="muted">{{ events|length }} event{% if events|length != 1 %}s{% endif %}</span></div>
+  {% if events %}<div class="event-grid">{% for event in events %}
+    <article class="event-card"><div class="event-card-top"><span class="event-tag">LIVE EVENT</span><span class="event-number">{{ "%02d"|format(loop.index) }}</span></div><div class="event-card-body"><p class="event-date">{{ event.starts_at|datetime_local }}</p><h3>{{ event.name }}</h3><p class="event-venue">⌖ &nbsp;{{ event.venue }}</p>{% if event.description %}<p class="event-description">{{ event.description }}</p>{% endif %}<div class="event-card-bottom"><span>From <strong>{{ "%.2f"|format(event.starting_price or 0) }}</strong></span><a href="{{ url_for('event_detail', event_id=event.id) }}">Get tickets <span>↗</span></a></div></div></article>
+  {% endfor %}</div>{% else %}<div class="empty-state"><span class="empty-icon">✳</span><h3>The stage is yours.</h3><p>There are no events just yet. Create the first one and get the show on the road.</p><a class="button" href="{{ url_for('new_event') }}">Create your first event <span>+</span></a></div>{% endif %}
+</section>
+<section class="host-cta"><div><p class="eyebrow">GOT SOMETHING GOOD?</p><h2>Your event deserves<br>a full house.</h2></div><a class="button button-light" href="{{ url_for('new_event') }}">Put it on the calendar <span>↗</span></a></section>
+{% endblock %}

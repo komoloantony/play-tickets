@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}Reservation received · Play Tickets{% endblock %}
+{% block content %}
+<section class="confirmation"><span class="confirmation-mark">✓</span><p class="eyebrow">RESERVATION RECEIVED</p><h1>You're on the list.</h1><p>Your reservation for <strong>{{ quantity }} × {{ ticket_type.name }}</strong> to <strong>{{ ticket_type.event_name }}</strong> is pending. The event organizer must verify payment before confirming it.</p><div class="reference">RESERVATION #{{ "%05d"|format(order_id) }}</div><p class="fine-print">This demo does not collect payments or issue entry-ready tickets.</p><a class="button" href="{{ url_for('index') }}">Back to events <span>→</span></a></section>
+{% endblock %}
