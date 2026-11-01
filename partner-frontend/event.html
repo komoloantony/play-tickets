@@ -85,27 +85,27 @@
 
 <form class="booking-form" id="booking-form" hidden>
   <h3>Reserve your tickets</h3>
-  <p>Enter your details to continue.</p>
+  <p>Enter your details once for your entire booking.</p>
 
-<label for="attendee-name">Full name</label>
-<input
-  id="attendee-name"
-  name="name"
-  type="text"
-  placeholder="Enter your full name"
-  autocomplete="name"
-  required
->
+  <label for="attendee-name">Purchaser's full name</label>
+  <input
+    id="attendee-name"
+    name="name"
+    type="text"
+    placeholder="Enter your full name"
+    autocomplete="name"
+    required
+  >
 
-<label for="attendee-email">Email address</label>
-<input
-  id="attendee-email"
-  name="email"
-  type="email"
-  placeholder="you@example.com"
-  autocomplete="email"
-  required
->
+  <label for="attendee-email">Email address</label>
+  <input
+    id="attendee-email"
+    name="email"
+    type="email"
+    placeholder="you@example.com"
+    autocomplete="email"
+    required
+  >
 
   <label for="ticket-quantity">Number of tickets</label>
   <select id="ticket-quantity" name="quantity" required>
@@ -115,13 +115,6 @@
     <option value="4">4 tickets</option>
     <option value="5">5 tickets</option>
   </select>
-  
-<div class="attendee-details-section">
-  <h3>Who is attending?</h3>
-  <p>Enter the name and email of each ticket holder.</p>
-  <div id="attendee-fields"></div>
-</div>
-
 
   <label for="mpesa-phone">M-Pesa phone number</label>
   <input
