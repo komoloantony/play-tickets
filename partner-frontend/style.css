@@ -235,6 +235,22 @@ a {
   box-shadow: 0 25px 80px #000;
 }
 
+.hero-poster-image {
+  position: relative;
+  z-index: 1;
+  width: min(280px, 80%);
+  height: auto;
+  border: 1px solid #a7873f;
+  border-radius: 4px;
+  box-shadow: 0 25px 80px #000;
+  transform: rotate(2deg);
+  transition: transform 0.25s ease;
+}
+
+.hero-poster-image:hover {
+  transform: rotate(0) scale(1.02);
+}
+
 .poster-top,
 .poster-small,
 .poster-bottom {
@@ -322,33 +338,22 @@ a {
 
 .event-cover {
   position: relative;
-  min-height: 370px;
-  padding: 25px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  min-height: 0;
+  aspect-ratio: 539 / 668;
   overflow: hidden;
-  text-align: center;
-  background:
-    radial-gradient(ellipse at 50% 40%, #4a3514 0%, #21190c 35%, #100e0a 72%);
+  background: #0b0b0b;
+}
+
+.event-cover-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .event-cover::before,
 .event-cover::after {
-  position: absolute;
-  content: "";
-  width: 250px;
-  height: 250px;
-  border: 1px solid #8c6b2c;
-  border-radius: 50%;
-  opacity: 0.45;
-}
-
-.event-cover::after {
-  width: 310px;
-  height: 310px;
-  opacity: 0.2;
+  content: none;
 }
 
 .cover-label {
@@ -484,6 +489,26 @@ a {
   color: var(--gold-light);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 22px;
+}
+
+.ticket-price-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  margin-top: 5px;
+}
+
+.ticket-price-summary p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ticket-price-summary strong {
+  display: block;
+  color: var(--gold-light);
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 17px;
+  font-weight: 600;
 }
 
 .demo-disclaimer {

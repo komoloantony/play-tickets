@@ -11,7 +11,6 @@ const paymentFeedback = document.getElementById("payment-feedback");
 const nameInput = document.getElementById("attendee-name");
 const emailInput = document.getElementById("attendee-email");
 const quantityInput = document.getElementById("ticket-quantity");
-const phoneInput = document.getElementById("mpesa-phone");
 
 // Ticket results
 const ticketResults = document.getElementById("ticket-results");
@@ -62,7 +61,7 @@ function downloadTicket(ticket) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Firebrand Play Ticket</title>
+<title>Behind the Sins Ticket</title>
 
 <style>
 body {
@@ -115,9 +114,11 @@ p {
 <p><strong>Purchaser:</strong> ${escapeHtml(ticket.name)}</p>
 <p><strong>Email:</strong> ${escapeHtml(ticket.email)}</p>
 <p><strong>Ticket ID:</strong> ${ticket.id}</p>
+<p><strong>Ticket type:</strong> ${escapeHtml(ticket.ticketType)} — KSh ${ticket.price}</p>
 <img src="${qrData}" alt="Ticket QR code">
 <p class="warning">DEMO TICKET — NOT VALID FOR ENTRY</p>
-<p>Event date, venue and price to be confirmed.</p>
+<p>13 December 2026 · Gates open at 3:00 PM</p>
+<p>Jesus Is Alive Ministries, Haile Selassie Avenue (opposite KFA building)</p>
 </div>
 </body>
 </html>`;
@@ -148,11 +149,13 @@ bookingForm.addEventListener("submit", event => {
   const purchaserName = nameInput.value.trim();
   const purchaserEmail = emailInput.value.trim();
   const quantity = Number(quantityInput.value);
-  const phone = phoneInput.value.trim();
+  const ticketDetails = {
+    general: { label: "General admission", price: 200 },
+    vip: { label: "VIP", price: 500 }
+  }[document.getElementById("ticket-type").value];
 
-  if (!/^(07|01)\d{8}$/.test(phone)) {
-    paymentFeedback.textContent =
-      "Enter a valid Kenyan phone number, e.g. 0712345678.";
+  if (!ticketDetails) {
+    paymentFeedback.textContent = "Choose a valid ticket type.";
     return;
   }
 
@@ -180,14 +183,16 @@ bookingForm.addEventListener("submit", event => {
     const ticket = {
       id: ticketId,
       name: purchaserName,
-      email: purchaserEmail
+      email: purchaserEmail,
+      ticketType: ticketDetails.label,
+      price: ticketDetails.price
     };
 
     const card = document.createElement("article");
     card.className = "ticket-card";
 
     const title = document.createElement("h3");
-    title.textContent = "FIREBRAND PLAY";
+    title.textContent = "BEHIND THE SINS";
 
     const warning = document.createElement("p");
     warning.className = "demo-warning";
@@ -201,6 +206,10 @@ bookingForm.addEventListener("submit", event => {
 
     const emailLine = document.createElement("p");
     emailLine.textContent = "Email: " + purchaserEmail;
+
+    const ticketTypeLine = document.createElement("p");
+    ticketTypeLine.textContent =
+      `Ticket: ${ticketDetails.label} · KSh ${ticketDetails.price}`;
 
     const qrContainer = document.createElement("div");
     qrContainer.className = "ticket-qr";
@@ -227,6 +236,7 @@ bookingForm.addEventListener("submit", event => {
       title,
       warning,
       idLine,
+      ticketTypeLine,
       nameLine,
       emailLine,
       qrContainer,

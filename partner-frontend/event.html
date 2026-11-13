@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Firebrand Play | Firebrand Tickets</title>
+  <title>Behind the Sins | Firebrand Tickets</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="event.css">
  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -24,57 +23,52 @@
 
     <section class="event-detail-layout">
       <div class="event-detail-poster">
-        <p class="poster-top">FIREBRAND PRESENTS</p>
-        <div class="poster-line"></div>
-        <p class="poster-small">AN UNFORGETTABLE EXPERIENCE</p>
-        <h1>FIREBRAND<br><span>PLAY</span></h1>
-        <div class="poster-line"></div>
-        <p class="poster-bottom">ONE STAGE. ONE STORY. ONE EXPERIENCE.</p>
+        <img
+          src="assets/behind-the-sins.png"
+          alt="Behind the Sins stage play poster: 13 December 2026 at Jesus Is Alive Ministries"
+          width="539"
+          height="668"
+        >
       </div>
 
       <div class="event-detail-content">
-        <p class="eyebrow">FEATURED PERFORMANCE</p>
-        <h2>Firebrand Play</h2>
-        
-<p class="event-detail-intro">
-  Firebrand Play is a Christian/gospel event taking place on
-  13 December 2026 at Jesus Is Alive Ministries. Join us for
-  this upcoming event. Further programme details will be
-  announced by the organisers.
-</p>
+        <p class="eyebrow">FIREBRAND NATION PRESENTS · A STAGE PLAY</p>
+        <h2>Behind the Sins</h2>
+        <p class="event-detail-intro">
+          Join us for <em>Behind the Sins</em> on 13 December 2026.
+          Gates open at 3:00 PM at Jesus Is Alive Ministries, and free popcorn
+          is included.
+        </p>
 
+        <div class="detail-list">
+          <div>
+            <span>Date</span>
+            <strong>Sunday, 13 December 2026</strong>
+          </div>
+          <div>
+            <span>Gates open</span>
+            <strong>3:00 PM</strong>
+          </div>
+          <div>
+            <span>Venue</span>
+            <strong>Jesus Is Alive Ministries, Haile Selassie Avenue (opposite KFA building)</strong>
+          </div>
+        </div>
 
-        
-<div class="detail-list">
-  <div>
-    <span>Event type</span>
-    <strong>Christian / Gospel Event</strong>
-  </div>
-  <div>
-    <span>Date</span>
-    <strong>Sunday, 13 December 2026</strong>
-  </div>
-  <div>
-    <span>Time</span>
-    <strong>3:00 PM (1500 hrs)</strong>
-  </div>
-  <div>
-    <span>Venue</span>
-    <strong>Jesus Is Alive Ministries</strong>
-  </div>
-  <div>
-    <span>Ticket price</span>
-    <strong>KSh 100 per person</strong>
-  </div>
-</div>
+        <div class="ticket-price-grid" aria-label="Ticket prices">
+          <div class="ticket-price-option">
+            <span>General admission</span>
+            <strong>KSh 200</strong>
+          </div>
+          <div class="ticket-price-option ticket-price-vip">
+            <span>VIP</span>
+            <strong>KSh 500</strong>
+          </div>
+        </div>
 
-
-       
-<p class="event-detail-note">
-  Ticket price: KSh 100 per person. Please confirm the exact
-  venue location and any additional programme details with
-  the organisers before attending.
-</p>
+        <p class="event-detail-note">
+          Free popcorn. Demo booking does not take payment or create valid entry tickets.
+        </p>
 
         
 <button class="primary-button book-event-button" id="book-event" type="button">
@@ -85,7 +79,7 @@
 
 <form class="booking-form" id="booking-form" hidden>
   <h3>Reserve your tickets</h3>
-  <p>Enter your details once for your entire booking.</p>
+  <p>Enter your details once to create demo tickets. No payment will be taken.</p>
 
   <label for="attendee-name">Purchaser's full name</label>
   <input
@@ -107,6 +101,12 @@
     required
   >
 
+  <label for="ticket-type">Ticket type</label>
+  <select id="ticket-type" name="ticket-type" required>
+    <option value="general">General admission — KSh 200</option>
+    <option value="vip">VIP — KSh 500</option>
+  </select>
+
   <label for="ticket-quantity">Number of tickets</label>
   <select id="ticket-quantity" name="quantity" required>
     <option value="1">1 ticket</option>
@@ -116,19 +116,8 @@
     <option value="5">5 tickets</option>
   </select>
 
-  <label for="mpesa-phone">M-Pesa phone number</label>
-  <input
-    id="mpesa-phone"
-    name="phone"
-    type="tel"
-    placeholder="e.g. 0712345678"
-    pattern="(?:07|01)[0-9]{8}"
-    maxlength="10"
-    required
-  >
-
   <button class="primary-button" type="submit">
-    Continue to payment
+    Create demo tickets
   </button>
 
   <p id="payment-feedback" class="booking-feedback" role="status"></p>
