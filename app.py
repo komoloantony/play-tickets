@@ -1,16 +1,20 @@
 """JSON backend for Play Tickets; the frontend is a separate client of this API."""
 
+import io
 import os
 import math
 import hmac
 import logging
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from flask import Flask, jsonify, request
+import qrcode
+from qrcode.image.svg import SvgPathImage
 from database import close_db, expire_pending_reservations, get_db, init_db, remaining_tickets
 from payments import PaymentError, check_payment, is_configured, start_payment
 
@@ -368,6 +372,70 @@ def api_reserve_tickets(ticket_type_id):
     }), 201
 
 
+def _ticket_qr_svg(ticket_code):
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
+        border=4,
+    )
+    qr.add_data(ticket_code)
+    qr.make(fit=True)
+    image = qr.make_image(image_factory=SvgPathImage)
+    output = io.BytesIO()
+    image.save(output)
+    return output.getvalue().decode("utf-8")
+
+
+def _issue_tickets(db, order_id):
+    order = db.execute(
+        "SELECT quantity FROM orders WHERE id = ?", (order_id,)
+    ).fetchone()
+    if order is None:
+        raise LookupError(f"Reservation {order_id} was not found while issuing tickets.")
+
+    existing_numbers = {
+        row["ticket_number"]
+        for row in db.execute(
+            "SELECT ticket_number FROM tickets WHERE order_id = ?", (order_id,)
+        ).fetchall()
+    }
+    issued_at = datetime.now(timezone.utc).isoformat()
+    for ticket_number in range(1, order["quantity"] + 1):
+        if ticket_number in existing_numbers:
+            continue
+        ticket_code = f"PTK-{secrets.token_hex(16).upper()}"
+        db.execute(
+            "INSERT OR IGNORE INTO tickets "
+            "(order_id, ticket_number, ticket_code, status, issued_at) "
+            "VALUES (?, ?, ?, 'issued', ?)",
+            (order_id, ticket_number, ticket_code, issued_at),
+        )
+
+
+def _tickets_for_order(db, order_id):
+    rows = db.execute(
+        "SELECT tickets.ticket_number, tickets.ticket_code, tickets.status, "
+        "tickets.issued_at, tickets.checked_in_at, ticket_types.name AS ticket_type, "
+        "events.name AS event_name "
+        "FROM tickets "
+        "JOIN orders ON orders.id = tickets.order_id "
+        "JOIN ticket_types ON ticket_types.id = orders.ticket_type_id "
+        "JOIN events ON events.id = ticket_types.event_id "
+        "WHERE tickets.order_id = ? ORDER BY tickets.ticket_number",
+        (order_id,),
+    ).fetchall()
+    return [{
+        "ticket_number": row["ticket_number"],
+        "ticket_code": row["ticket_code"],
+        "qr_svg": _ticket_qr_svg(row["ticket_code"]),
+        "status": row["status"],
+        "issued_at": row["issued_at"],
+        "checked_in_at": row["checked_in_at"],
+        "ticket_type": row["ticket_type"],
+        "event_name": row["event_name"],
+    } for row in rows]
+
+
 def _record_provider_result(db, order, succeeded, transaction_id=""):
     """Apply one provider result without resurrecting an expired reservation."""
     payment_status = "succeeded" if succeeded else "failed"
@@ -390,6 +458,8 @@ def _record_provider_result(db, order, succeeded, transaction_id=""):
         "WHERE id = ?",
         (payment_status, reservation_status, transaction_id, order["id"]),
     )
+    if succeeded and reservation_status == "confirmed":
+        _issue_tickets(db, order["id"])
     db.commit()
     return payment_status, reservation_status
 
@@ -446,6 +516,11 @@ def api_payment_status(payment_reference):
         order = dict(order)
         order["status"] = "expired"
 
+    tickets = (
+        _tickets_for_order(db, order["id"])
+        if order["payment_status"] == "succeeded" and order["status"] == "confirmed"
+        else []
+    )
     return jsonify({
         "payment_reference": payment_reference,
         "payment_provider": order["payment_provider"],
@@ -457,6 +532,66 @@ def api_payment_status(payment_reference):
             and order["status"] != "confirmed"
         ),
         "manual_review_required": order["payment_status"] == "unknown",
+        "tickets": tickets,
+    })
+
+
+@app.post("/api/v1/admin/tickets/check-in")
+@admin_required
+def api_admin_ticket_check_in():
+    """Validate a paid ticket and atomically mark it as checked in."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+    ticket_code = str(data.get("ticket_code", "")).strip().upper()
+    if not re.fullmatch(r"PTK-[A-F0-9]{32}", ticket_code):
+        return jsonify({"error": "Provide a valid ticket QR code."}), 400
+
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    ticket = db.execute(
+        "SELECT tickets.id, tickets.ticket_number, tickets.status, tickets.checked_in_at, "
+        "orders.status AS reservation_status, orders.payment_status, orders.buyer_name, "
+        "ticket_types.name AS ticket_type, events.name AS event_name "
+        "FROM tickets "
+        "JOIN orders ON orders.id = tickets.order_id "
+        "JOIN ticket_types ON ticket_types.id = orders.ticket_type_id "
+        "JOIN events ON events.id = ticket_types.event_id "
+        "WHERE tickets.ticket_code = ?",
+        (ticket_code,),
+    ).fetchone()
+    if ticket is None:
+        db.rollback()
+        return jsonify({"error": "Ticket code not found."}), 404
+    if ticket["reservation_status"] != "confirmed" or ticket["payment_status"] != "succeeded":
+        db.rollback()
+        return jsonify({"error": "Ticket is not backed by a confirmed payment."}), 409
+    if ticket["status"] == "checked_in":
+        db.rollback()
+        return jsonify({
+            "error": "Ticket has already been checked in.",
+            "checked_in_at": ticket["checked_in_at"],
+        }), 409
+
+    checked_in_at = datetime.now(timezone.utc).isoformat()
+    updated = db.execute(
+        "UPDATE tickets SET status = 'checked_in', checked_in_at = ? "
+        "WHERE id = ? AND status = 'issued'",
+        (checked_in_at, ticket["id"]),
+    )
+    if updated.rowcount != 1:
+        db.rollback()
+        return jsonify({"error": "Ticket was checked in by another scanner."}), 409
+    db.commit()
+    return jsonify({
+        "ticket": {
+            "ticket_number": ticket["ticket_number"],
+            "status": "checked_in",
+            "checked_in_at": checked_in_at,
+            "ticket_type": ticket["ticket_type"],
+            "event_name": ticket["event_name"],
+            "buyer_name": ticket["buyer_name"],
+        },
     })
 
 
@@ -615,15 +750,19 @@ def api_sandbox_payment_result(payment_reference):
         return jsonify({"error": "Reservation is no longer payable."}), 409
 
     succeeded = data["result"] == "success"
-    db.execute(
-        "UPDATE orders SET payment_status = ?, status = ? WHERE id = ? AND status = 'pending'",
-        ("succeeded" if succeeded else "failed", "confirmed" if succeeded else "pending", order["id"]),
-    )
-    db.commit()
+    if succeeded:
+        payment_status, reservation_status = _record_provider_result(db, order, True)
+    else:
+        payment_status, reservation_status = "failed", "pending"
+        db.execute(
+            "UPDATE orders SET payment_status = ?, status = ? WHERE id = ? AND status = 'pending'",
+            (payment_status, reservation_status, order["id"]),
+        )
+        db.commit()
     return jsonify({
         "payment_reference": payment_reference,
-        "payment_status": "succeeded" if succeeded else "failed",
-        "reservation_status": "confirmed" if succeeded else "pending",
+        "payment_status": payment_status,
+        "reservation_status": reservation_status,
     })
 
 
@@ -655,15 +794,19 @@ def api_sandbox_callback(provider, callback_token):
         return jsonify({"error": "Reservation is no longer payable."}), 409
 
     succeeded = data["result"] == "success"
-    db.execute(
-        "UPDATE orders SET payment_status = ?, status = ? WHERE id = ? AND status = 'pending'",
-        ("succeeded" if succeeded else "failed", "confirmed" if succeeded else "pending", order["id"]),
-    )
-    db.commit()
+    if succeeded:
+        payment_status, reservation_status = _record_provider_result(db, order, True)
+    else:
+        payment_status, reservation_status = "failed", "pending"
+        db.execute(
+            "UPDATE orders SET payment_status = ?, status = ? WHERE id = ? AND status = 'pending'",
+            (payment_status, reservation_status, order["id"]),
+        )
+        db.commit()
     return jsonify({
         "payment_reference": payment_reference,
-        "payment_status": "succeeded" if succeeded else "failed",
-        "reservation_status": "confirmed" if succeeded else "pending",
+        "payment_status": payment_status,
+        "reservation_status": reservation_status,
     })
 
 

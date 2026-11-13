@@ -115,6 +115,45 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(status["payment_status"], "succeeded")
         self.assertEqual(status["reservation_status"], "confirmed")
         self.assertNotIn("buyer_email", status)
+        self.assertEqual(len(status["tickets"]), 2)
+        self.assertEqual(len({ticket["ticket_code"] for ticket in status["tickets"]}), 2)
+        self.assertIn("<svg", status["tickets"][0]["qr_svg"])
+
+    def test_paid_tickets_can_be_checked_in_only_once(self):
+        with patch.object(app_module, "PAYMENT_MODE", "sandbox"), patch.dict(
+            os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}
+        ):
+            created = self.create_reservation(quantity=2)
+            reservation = created.get_json()["reservation"]
+            unpaid_status = self.client.get(
+                f"/api/v1/payments/{reservation['payment_reference']}"
+            ).get_json()
+            self.assertEqual(unpaid_status["tickets"], [])
+            confirmed = self.client.post(
+                f"/api/v1/sandbox/payments/{reservation['payment_reference']}/result",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"result": "success"},
+            )
+            status = self.client.get(
+                f"/api/v1/payments/{reservation['payment_reference']}"
+            ).get_json()
+            ticket_code = status["tickets"][0]["ticket_code"]
+            checked_in = self.client.post(
+                "/api/v1/admin/tickets/check-in",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"ticket_code": ticket_code},
+            )
+            duplicate = self.client.post(
+                "/api/v1/admin/tickets/check-in",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"ticket_code": ticket_code},
+            )
+
+        self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(len(status["tickets"]), 2)
+        self.assertEqual(checked_in.status_code, 200)
+        self.assertEqual(checked_in.get_json()["ticket"]["status"], "checked_in")
+        self.assertEqual(duplicate.status_code, 409)
 
     def test_live_checkout_requires_provider_credentials_before_holding_inventory(self):
         with patch.dict(os.environ, {"AIRTEL_CLIENT_SECRET": ""}):
@@ -210,6 +249,7 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(status["payment_status"], "succeeded")
         self.assertEqual(status["reservation_status"], "expired")
         self.assertTrue(status["refund_or_support_required"])
+        self.assertEqual(status["tickets"], [])
 
 
 class ProviderRequestTests(unittest.TestCase):

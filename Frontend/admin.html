@@ -43,6 +43,37 @@
         <button class="refresh-button" id="refresh-dashboard" type="button">Refresh data</button>
       </div>
       <div class="admin-metrics" id="admin-metrics"></div>
+      <section class="admin-panel checkin-panel" aria-labelledby="checkin-heading">
+        <div class="panel-heading">
+          <div><p class="eyebrow">DOOR STAFF</p><h2 id="checkin-heading">Ticket check-in</h2></div>
+          <button class="refresh-button" id="start-ticket-camera" type="button">Scan with camera</button>
+        </div>
+        <div class="checkin-content">
+          <p>Use a QR scanner, your camera, or enter the ticket code printed below the QR.</p>
+          <video id="ticket-scan-video" class="ticket-scan-video" playsinline hidden aria-label="Camera QR scanner"></video>
+          <form id="ticket-checkin-form" class="checkin-form">
+            <label for="ticket-code">Ticket code</label>
+            <div class="checkin-controls">
+              <input
+                id="ticket-code"
+                name="ticket_code"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                autocapitalize="characters"
+                maxlength="36"
+                pattern="PTK-[A-Fa-f0-9]{32}"
+                placeholder="PTK-…"
+                required
+              >
+              <button class="primary-button" id="checkin-submit" type="submit">Validate & check in</button>
+            </div>
+          </form>
+          <p class="checkin-message" id="checkin-message" role="status" aria-live="polite">
+            A ticket is accepted only once and only after its payment is confirmed.
+          </p>
+        </div>
+      </section>
       <section class="admin-panel">
         <div class="panel-heading">
           <div><p class="eyebrow">BUYER ACTIVITY</p><h2>Reservations</h2></div>

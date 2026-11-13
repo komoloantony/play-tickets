@@ -16,6 +16,7 @@ const paymentResults = document.getElementById("payment-results");
 const paymentResultTitle = document.getElementById("payment-result-title");
 const paymentResultMessage = document.getElementById("payment-result-message");
 const paymentResultReference = document.getElementById("payment-result-reference");
+const issuedTickets = document.getElementById("issued-tickets");
 const ticketPrices = document.getElementById("ticket-prices");
 const eventDescription = document.getElementById("event-description");
 const eventDate = document.getElementById("event-date");
@@ -38,6 +39,36 @@ function showPaymentStatus(title, message, reference, shouldScroll = true) {
   paymentResults.hidden = false;
   if (shouldScroll) {
     paymentResults.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function renderIssuedTickets(tickets, reference) {
+  issuedTickets.replaceChildren();
+  if (!Array.isArray(tickets) || tickets.length === 0) {
+    const unavailable = document.createElement("p");
+    unavailable.textContent =
+      `Payment is confirmed, but entry tickets could not be loaded. Contact the organizer and provide reservation reference ${reference}.`;
+    issuedTickets.append(unavailable);
+    return;
+  }
+
+  for (const ticket of tickets) {
+    const card = document.createElement("article");
+    card.className = "ticket-card";
+    const heading = document.createElement("h3");
+    heading.textContent = `${ticket.ticket_type} · Ticket ${ticket.ticket_number}`;
+    const eventName = document.createElement("p");
+    eventName.textContent = ticket.event_name;
+    const qrContainer = document.createElement("div");
+    qrContainer.className = "ticket-qr";
+    const qrImage = document.createElement("img");
+    qrImage.alt = `Entry QR code for ticket ${ticket.ticket_number}`;
+    qrImage.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ticket.qr_svg)}`;
+    qrContainer.append(qrImage);
+    const code = document.createElement("p");
+    code.textContent = `Ticket code: ${ticket.ticket_code}`;
+    card.append(heading, eventName, qrContainer, code);
+    issuedTickets.append(card);
   }
 }
 
@@ -169,9 +200,10 @@ async function checkPaymentStatus() {
     } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
       showPaymentStatus(
         "Payment confirmed",
-        "Your booking is confirmed. Keep the reservation reference for the event organizer.",
+        "Your payment is confirmed. Show each entry QR code at the door.",
         paymentReference
       );
+      renderIssuedTickets(data.tickets, paymentReference);
       window.clearInterval(pollingTimer);
       submitButton.disabled = true;
     } else if (data.refund_or_support_required) {
@@ -258,6 +290,7 @@ bookingForm.addEventListener("submit", async (event) => {
     }
 
     paymentReference = data.reservation.payment_reference;
+    issuedTickets.replaceChildren();
     paymentFeedback.textContent = data.message;
     showPaymentStatus(
       data.reservation.payment_status === "unknown"

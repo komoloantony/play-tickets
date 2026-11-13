@@ -70,6 +70,18 @@ def init_db():
             payment_currency TEXT,
             payment_status TEXT NOT NULL DEFAULT 'not_started'
         );
+        -- Each paid reservation receives one independently checkable entry ticket.
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            ticket_number INTEGER NOT NULL,
+            ticket_code TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'issued'
+                CHECK(status IN ('issued', 'checked_in')),
+            issued_at TEXT NOT NULL,
+            checked_in_at TEXT,
+            UNIQUE(order_id, ticket_number)
+        );
         """
     )
     order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}

@@ -15,22 +15,111 @@ const metrics = document.getElementById("admin-metrics");
 const rows = document.getElementById("reservation-rows");
 const emptyReservations = document.getElementById("empty-reservations");
 const reservationCount = document.getElementById("reservation-count");
+const checkinForm = document.getElementById("ticket-checkin-form");
+const ticketCodeInput = document.getElementById("ticket-code");
+const checkinSubmit = document.getElementById("checkin-submit");
+const checkinMessage = document.getElementById("checkin-message");
+const cameraButton = document.getElementById("start-ticket-camera");
+const cameraVideo = document.getElementById("ticket-scan-video");
 let adminToken = "";
 let eventData = [];
+let cameraStream;
+let cameraFrame;
+let scanning = false;
 
 function setMessage(text, kind = "") {
   message.textContent = text;
   message.className = `admin-message ${kind}`.trim();
 }
 
-async function adminRequest(path) {
+async function adminRequest(path, options = {}) {
   const response = await fetch(`${ADMIN_API_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${adminToken}` },
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${adminToken}`
+    },
     cache: "no-store"
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
   return data;
+}
+
+function setCheckinMessage(text, kind = "") {
+  checkinMessage.textContent = text;
+  checkinMessage.className = `checkin-message ${kind}`.trim();
+}
+
+function stopCameraScanner() {
+  scanning = false;
+  if (cameraFrame) window.cancelAnimationFrame(cameraFrame);
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+  cameraVideo.srcObject = null;
+  cameraVideo.hidden = true;
+  cameraButton.textContent = "Scan with camera";
+}
+
+async function scanWithCamera() {
+  if (cameraStream) {
+    stopCameraScanner();
+    setCheckinMessage("Camera scanning stopped.");
+    return;
+  }
+  if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+    setCheckinMessage(
+      "Camera QR scanning is unavailable in this browser. Use a USB QR scanner or enter the printed ticket code.",
+      "error"
+    );
+    return;
+  }
+
+  try {
+    const formats = await window.BarcodeDetector.getSupportedFormats();
+    if (!formats.includes("qr_code")) {
+      setCheckinMessage(
+        "This browser cannot read QR codes with its camera. Use a USB QR scanner or enter the printed ticket code.",
+        "error"
+      );
+      return;
+    }
+    const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    });
+    cameraVideo.srcObject = cameraStream;
+    cameraVideo.hidden = false;
+    await cameraVideo.play();
+    scanning = true;
+    cameraButton.textContent = "Stop camera";
+    setCheckinMessage("Point the camera at a ticket QR code.");
+
+    const scanFrame = async () => {
+      if (!scanning) return;
+      try {
+        const codes = await detector.detect(cameraVideo);
+        if (codes.length > 0) {
+          ticketCodeInput.value = codes[0].rawValue;
+          stopCameraScanner();
+          checkinForm.requestSubmit();
+          return;
+        }
+      } catch (error) {
+        stopCameraScanner();
+        setCheckinMessage(`Camera scan failed: ${error.message}`, "error");
+        return;
+      }
+      cameraFrame = window.requestAnimationFrame(scanFrame);
+    };
+    scanFrame();
+  } catch (error) {
+    stopCameraScanner();
+    setCheckinMessage(`Could not start the camera: ${error.message}`, "error");
+  }
 }
 
 function metric(label, value) {
@@ -135,3 +224,29 @@ accessForm.addEventListener("submit", (event) => {
 });
 eventPicker.addEventListener("change", () => loadReservations().catch((error) => setMessage(error.message, "error")));
 document.getElementById("refresh-dashboard").addEventListener("click", loadDashboard);
+checkinForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const ticketCode = ticketCodeInput.value.trim().toUpperCase();
+  checkinSubmit.disabled = true;
+  setCheckinMessage("Validating ticket…");
+  try {
+    const data = await adminRequest("/api/v1/admin/tickets/check-in", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticket_code: ticketCode })
+    });
+    setCheckinMessage(
+      `Checked in: ${data.ticket.buyer_name} · ${data.ticket.ticket_type} · ${data.ticket.event_name}.`,
+      "success"
+    );
+    ticketCodeInput.value = "";
+    ticketCodeInput.focus();
+  } catch (error) {
+    setCheckinMessage(error.message, "error");
+    ticketCodeInput.select();
+  } finally {
+    checkinSubmit.disabled = false;
+  }
+});
+cameraButton.addEventListener("click", scanWithCamera);
+window.addEventListener("pagehide", stopCameraScanner);

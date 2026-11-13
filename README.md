@@ -5,7 +5,7 @@ This folder contains the Python backend and the partner-built static frontend fo
 ## What each file is for
 
 - **`app.py`** — The Python app. It contains API routes for events, ticket reservations, and protected admin data.
-- **`requirements.txt`** — The list of Python tools the app needs. Right now, that is Flask.
+- **`requirements.txt`** — Flask and the QR-code renderer used for entry tickets.
 - **`database.py`** — The database helper file. It creates and connects to SQLite, builds the tables, and counts or expires ticket reservations.
 - **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
 - **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
@@ -33,7 +33,7 @@ python -m http.server 8000
 
 Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requests from local ports 8000 and 8001 by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create a `Behind the Sins` event and its ticket categories with the admin API before booking it.
 
-`Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend, then starts an M-Pesa or Airtel Money payment request. It polls the payment-status endpoint until the provider confirms or declines the transaction. The booking reference is not an entry QR ticket. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
+`Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend, then starts an M-Pesa or Airtel Money payment request. It polls the payment-status endpoint until the provider confirms or declines the transaction. Each confirmed reservation receives one unique QR entry ticket per quantity purchased; buyers can display the QR codes and printed codes on the confirmation page. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
 
 ### Admin review page
 
@@ -44,7 +44,7 @@ Set-Location Frontend
 python -m http.server 8001
 ```
 
-Open `http://127.0.0.1:8001/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations. The token is held in browser memory for this tab and is not saved in the frontend files.
+Open `http://127.0.0.1:8001/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations, or use the ticket check-in tool. Staff can scan using a supported browser camera, a USB QR scanner, or enter the printed ticket code. The token is held in browser memory for this tab and is not saved in the frontend files.
 
 ## API for the frontend
 
@@ -59,6 +59,7 @@ All API routes use the `/api/v1` prefix and exchange JSON.
 | `POST` | `/api/v1/events/<event_id>/ticket-types` | Add a ticket category (admin token required). |
 | `POST` | `/api/v1/ticket-types/<ticket_type_id>/reservations` | Hold tickets while the buyer completes payment. |
 | `GET` | `/api/v1/payments/<payment_reference>` | Return a buyer-safe payment and reservation status. |
+| `POST` | `/api/v1/admin/tickets/check-in` | Validate a confirmed paid ticket and mark it checked in (admin token required). |
 | `POST` | `/api/v1/payments/callbacks/<provider>/<callback_token>` | Receive a token-protected live provider callback over HTTPS. |
 | `POST` | `/api/v1/sandbox/payments/<payment_reference>/result` | Simulate a payment result while sandbox mode is enabled (admin token required). |
 | `POST` | `/api/v1/sandbox/callbacks/<provider>/<callback_token>` | Receive a token-protected mock callback through an HTTPS tunnel. |
@@ -164,7 +165,7 @@ For provider sandbox testing, set `MPESA_ENV` and/or `AIRTEL_ENV` to `sandbox` w
 
 The backend verifies M-Pesa callback reference, phone, amount, and receipt against the reservation. Airtel callback notifications are checked against Airtel's server-side transaction-status API. Repeated callbacks do not create duplicate bookings. If money is confirmed after a reservation hold expires, the reservation is not revived; the status endpoint flags it for organizer support/refund review.
 
-Only whole-number KES ticket amounts are payable. Confirmed payments confirm reservations, but this application does not yet issue entry-ready QR tickets or automatically refund late payments. Run the Flask development server only for local testing; production deployment must use a supported WSGI server behind HTTPS. Complete provider onboarding, configure callback URLs, and test with provider sandbox accounts before enabling production collection.
+Only whole-number KES ticket amounts are payable. Confirmed payments issue unique QR entry tickets, and the check-in endpoint rejects invalid, unpaid, and already-used tickets. Camera scanning requires a browser that supports `BarcodeDetector` and camera access; a USB QR scanner or manual ticket-code entry is also supported. Late payments are not used to revive expired reservations and still require organizer support/refund review. Admin access currently uses a shared token, not individual staff accounts. Run the Flask development server only for local testing; production deployment must use a supported WSGI server behind HTTPS. Complete provider onboarding, configure callback URLs, and test with provider sandbox accounts before enabling production collection.
 
 ### Local payment sandbox
 

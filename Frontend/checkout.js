@@ -30,6 +30,39 @@ function showCheckoutResult(title, message, reference) {
   checkoutResults.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function renderIssuedTickets(tickets, reference) {
+  const ticketList = document.createElement("div");
+  ticketList.className = "ticket-list";
+  if (!Array.isArray(tickets) || tickets.length === 0) {
+    const unavailable = document.createElement("p");
+    unavailable.textContent =
+      `Payment is confirmed, but entry tickets could not be loaded. Contact the organizer and provide reservation reference ${reference}.`;
+    ticketList.append(unavailable);
+    checkoutResults.append(ticketList);
+    return;
+  }
+
+  for (const ticket of tickets) {
+    const card = document.createElement("article");
+    card.className = "ticket-card";
+    const heading = document.createElement("h3");
+    heading.textContent = `${ticket.ticket_type} · Ticket ${ticket.ticket_number}`;
+    const eventName = document.createElement("p");
+    eventName.textContent = ticket.event_name;
+    const qrContainer = document.createElement("div");
+    qrContainer.className = "ticket-qr";
+    const qrImage = document.createElement("img");
+    qrImage.alt = `Entry QR code for ticket ${ticket.ticket_number}`;
+    qrImage.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ticket.qr_svg)}`;
+    qrContainer.append(qrImage);
+    const code = document.createElement("p");
+    code.textContent = `Ticket code: ${ticket.ticket_code}`;
+    card.append(heading, eventName, qrContainer, code);
+    ticketList.append(card);
+  }
+  checkoutResults.append(ticketList);
+}
+
 function addSandboxControls(reservation) {
   const note = document.createElement("p");
   note.textContent = "For local testing, choose a simulated payment result. The backend admin token is required.";
@@ -71,9 +104,10 @@ function startLivePaymentPolling(reservation) {
         reservation.status = data.reservation_status;
         showCheckoutResult(
           "Payment confirmed",
-          "Your booking is confirmed. Keep the reservation reference for the event organizer.",
+          "Your payment is confirmed. Show each entry QR code at the door.",
           reservation.payment_reference
         );
+        renderIssuedTickets(data.tickets, reservation.payment_reference);
         window.clearInterval(paymentPollingTimer);
       } else if (data.refund_or_support_required) {
         reservation.payment_status = data.payment_status;
@@ -209,10 +243,20 @@ async function simulatePayment(result) {
     showCheckoutResult(
       data.reservation_status === "confirmed" ? "Sandbox payment confirmed" : "Sandbox payment failed",
       data.reservation_status === "confirmed"
-        ? "The reservation is confirmed in the local sandbox. This prototype does not issue entry tickets or QR codes."
+        ? "The reservation is confirmed in the local sandbox. Show each entry QR code at the door."
         : "The payment failed. The reservation remains pending until its 15-minute hold expires.",
       data.payment_reference
     );
+    if (data.reservation_status === "confirmed") {
+      const statusResponse = await fetch(
+        `${CHECKOUT_API_BASE}/api/v1/payments/${encodeURIComponent(pendingReservation.payment_reference)}`
+      );
+      const statusData = await statusResponse.json();
+      if (!statusResponse.ok) {
+        throw new Error(statusData.error || "Could not load the issued tickets.");
+      }
+      renderIssuedTickets(statusData.tickets, pendingReservation.payment_reference);
+    }
   } catch (error) {
     showCheckoutResult("Payment simulation error", error.message, pendingReservation.payment_reference);
   }
