@@ -1,256 +1,280 @@
-
 "use strict";
 
-// Booking form elements
+const API_BASE = window.PLAY_TICKETS_API_BASE ||
+  (window.location.protocol === "file:" ||
+    window.location.port === "8000" ||
+    window.location.port === "8001"
+    ? "http://127.0.0.1:5000"
+    : window.location.origin);
+const PAYMENT_POLL_INTERVAL_MS = 8000;
+
 const bookButton = document.getElementById("book-event");
 const bookingForm = document.getElementById("booking-form");
 const bookingFeedback = document.getElementById("booking-feedback");
 const paymentFeedback = document.getElementById("payment-feedback");
+const paymentResults = document.getElementById("payment-results");
+const paymentResultTitle = document.getElementById("payment-result-title");
+const paymentResultMessage = document.getElementById("payment-result-message");
+const paymentResultReference = document.getElementById("payment-result-reference");
+const ticketPrices = document.getElementById("ticket-prices");
+const eventDescription = document.getElementById("event-description");
+const eventDate = document.getElementById("event-date");
+const eventVenue = document.getElementById("event-venue");
+const ticketTypeSelect = document.getElementById("ticket-type");
+const quantitySelect = document.getElementById("ticket-quantity");
+const submitButton = bookingForm.querySelector('button[type="submit"]');
 
-// Purchaser details
-const nameInput = document.getElementById("attendee-name");
-const emailInput = document.getElementById("attendee-email");
-const quantityInput = document.getElementById("ticket-quantity");
+let eventRecord;
+let paymentReference;
+let pollingTimer;
+let pollingInProgress = false;
 
-// Ticket results
-const ticketResults = document.getElementById("ticket-results");
-const ticketList = document.getElementById("ticket-list");
+function showPaymentStatus(title, message, reference, shouldScroll = true) {
+  paymentResultTitle.textContent = title;
+  paymentResultMessage.textContent = message;
+  paymentResultReference.textContent = reference
+    ? `Reservation reference: ${reference}`
+    : "";
+  paymentResults.hidden = false;
+  if (shouldScroll) {
+    paymentResults.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
 
-// Open booking form
+function updateQuantityOptions() {
+  const selectedTicket = eventRecord.ticket_types.find(
+    (ticket) => String(ticket.id) === ticketTypeSelect.value
+  );
+  const maximum = selectedTicket
+    ? Math.min(10, Number(selectedTicket.available))
+    : 0;
+  quantitySelect.replaceChildren();
+  for (let quantity = 1; quantity <= maximum; quantity += 1) {
+    quantitySelect.add(new Option(
+      `${quantity} ${quantity === 1 ? "ticket" : "tickets"}`,
+      String(quantity)
+    ));
+  }
+  quantitySelect.disabled = maximum === 0;
+  submitButton.disabled = maximum === 0;
+  if (maximum === 0 && selectedTicket) {
+    paymentFeedback.textContent = "This ticket type is sold out.";
+  } else {
+    paymentFeedback.textContent = "";
+  }
+}
+
+function renderTicketTypes() {
+  ticketPrices.replaceChildren();
+  ticketTypeSelect.replaceChildren();
+
+  for (const ticket of eventRecord.ticket_types) {
+    const priceCard = document.createElement("div");
+    priceCard.className = "ticket-price-option";
+    if (ticket.name.toLowerCase().includes("vip")) {
+      priceCard.classList.add("ticket-price-vip");
+    }
+
+    const name = document.createElement("span");
+    name.textContent = `${ticket.name} · ${ticket.available} available`;
+    const price = document.createElement("strong");
+    price.textContent = `KSh ${Number(ticket.price).toLocaleString("en-KE")}`;
+    priceCard.append(name, price);
+    ticketPrices.appendChild(priceCard);
+
+    const option = new Option(
+      `${ticket.name} — KSh ${Number(ticket.price).toLocaleString("en-KE")}`,
+      String(ticket.id)
+    );
+    option.disabled = Number(ticket.available) < 1;
+    ticketTypeSelect.add(option);
+  }
+
+  ticketTypeSelect.disabled = eventRecord.ticket_types.length === 0;
+  const firstAvailable = eventRecord.ticket_types.find(
+    (ticket) => Number(ticket.available) > 0
+  );
+  if (firstAvailable) {
+    ticketTypeSelect.value = String(firstAvailable.id);
+  }
+  updateQuantityOptions();
+}
+
+async function loadEvent() {
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/events`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Ticket sales are unavailable.");
+    }
+    eventRecord = (data.events || []).find(
+      (item) => item.name.trim().toLowerCase() === "behind the sins"
+    );
+    if (!eventRecord) {
+      throw new Error("Ticket sales for this event are not set up yet.");
+    }
+
+    eventDescription.textContent =
+      eventRecord.description || "Event details will be announced by the organizer.";
+    const startsAt = new Date(eventRecord.starts_at);
+    eventDate.textContent = Number.isNaN(startsAt.getTime())
+      ? eventRecord.starts_at
+      : new Intl.DateTimeFormat(undefined, {
+        dateStyle: "full",
+        timeStyle: "short"
+      }).format(startsAt);
+    eventVenue.textContent = eventRecord.venue;
+    renderTicketTypes();
+    if (eventRecord.ticket_types.length === 0) {
+      throw new Error("Ticket types have not been set up for this event.");
+    }
+    bookButton.disabled = eventRecord.ticket_types.every(
+      (ticket) => Number(ticket.available) < 1
+    );
+    bookingFeedback.textContent = bookButton.disabled
+      ? "All tickets are sold out."
+      : "";
+  } catch (error) {
+    bookingFeedback.textContent = error.message;
+    bookButton.disabled = true;
+    submitButton.disabled = true;
+    ticketPrices.textContent = error.message;
+  }
+}
+
+async function getJsonResponse(response) {
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "The payment request could not be completed.");
+  }
+  return data;
+}
+
+async function checkPaymentStatus() {
+  if (!paymentReference || pollingInProgress) return;
+  pollingInProgress = true;
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/v1/payments/${encodeURIComponent(paymentReference)}`
+    );
+    const data = await getJsonResponse(response);
+    if (data.manual_review_required) {
+      showPaymentStatus(
+        "Payment status uncertain — contact the organizer",
+        "The request may have reached M-Pesa, but confirmation could not be retrieved. Do not retry until the organizer checks it.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      submitButton.disabled = true;
+    } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
+      showPaymentStatus(
+        "Payment confirmed",
+        "Your booking is confirmed. Keep the reservation reference for the event organizer.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      submitButton.disabled = true;
+    } else if (data.refund_or_support_required) {
+      showPaymentStatus(
+        "Payment received — contact the organizer",
+        "The reservation hold expired before payment was confirmed. No tickets were reserved; contact the organizer about the payment.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      submitButton.disabled = true;
+    } else if (data.payment_status === "failed") {
+      showPaymentStatus(
+        "Payment not completed",
+        "The payment was declined or cancelled. The reservation hold has been released.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      submitButton.disabled = false;
+      paymentReference = null;
+    } else if (data.reservation_status === "expired") {
+      showPaymentStatus(
+        "Reservation expired",
+        "The payment window expired before payment was confirmed. Please start a new reservation.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      submitButton.disabled = false;
+      paymentReference = null;
+    } else {
+      showPaymentStatus(
+        "Waiting for payment",
+        "Approve the payment request on your phone. Keep this page open while we verify it.",
+        paymentReference,
+        false
+      );
+    }
+  } catch (error) {
+    showPaymentStatus(
+      "Checking payment",
+      "We could not refresh the payment status. We’ll keep trying; do not submit another payment yet.",
+      paymentReference,
+      false
+    );
+  } finally {
+    pollingInProgress = false;
+  }
+}
+
 bookButton.addEventListener("click", () => {
   bookingForm.hidden = false;
-
-  bookingForm.scrollIntoView({
-    behavior: "smooth",
-    block: "center"
-  });
-
+  bookingForm.scrollIntoView({ behavior: "smooth", block: "center" });
   bookingFeedback.textContent = "";
-  paymentFeedback.textContent = "";
 });
 
-// Protect ticket text from HTML injection
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, char => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  })[char]);
-}
+ticketTypeSelect.addEventListener("change", updateQuantityOptions);
 
-// Generate individual downloadable ticket
-function downloadTicket(ticket) {
-  const canvas = ticket.qrContainer.querySelector("canvas");
-  const image = ticket.qrContainer.querySelector("img");
-
-  let qrData;
-
-  if (canvas) {
-    qrData = canvas.toDataURL("image/png");
-  } else if (image) {
-    qrData = image.src;
-  } else {
-    alert("QR code is not ready. Please try again.");
-    return;
-  }
-
-  const ticketHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Behind the Sins Ticket</title>
-
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #090909;
-  color: #fff;
-  padding: 24px;
-}
-
-.ticket {
-  max-width: 420px;
-  margin: 20px auto;
-  padding: 24px;
-  border: 2px solid #d8b45a;
-  text-align: center;
-}
-
-h1 {
-  color: #f3d98b;
-}
-
-img {
-  width: 200px;
-  height: 200px;
-  background: #fff;
-  padding: 8px;
-}
-
-p {
-  overflow-wrap: anywhere;
-}
-
-.warning {
-  color: #e5c97e;
-  font-weight: bold;
-  font-size: 12px;
-}
-
-@media print {
-  body { padding: 0; }
-  .ticket { margin: auto; }
-}
-</style>
-</head>
-
-<body>
-<div class="ticket">
-<h1>FIREBRAND PLAY</h1>
-<p>FIREBRAND TICKETS</p>
-<p><strong>Purchaser:</strong> ${escapeHtml(ticket.name)}</p>
-<p><strong>Email:</strong> ${escapeHtml(ticket.email)}</p>
-<p><strong>Ticket ID:</strong> ${ticket.id}</p>
-<p><strong>Ticket type:</strong> ${escapeHtml(ticket.ticketType)} — KSh ${ticket.price}</p>
-<img src="${qrData}" alt="Ticket QR code">
-<p class="warning">DEMO TICKET — NOT VALID FOR ENTRY</p>
-<p>13 December 2026 · Gates open at 3:00 PM</p>
-<p>Jesus Is Alive Ministries, Haile Selassie Avenue (opposite KFA building)</p>
-</div>
-</body>
-</html>`;
-
-  const file = new Blob([ticketHtml], {
-    type: "text/html;charset=utf-8"
-  });
-
-  const fileUrl = URL.createObjectURL(file);
-  const link = document.createElement("a");
-
-  link.href = fileUrl;
-  link.download = ticket.id + ".html";
-
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
-}
-
-// Handle booking
-bookingForm.addEventListener("submit", event => {
+bookingForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!bookingForm.reportValidity() || !eventRecord || paymentReference) return;
 
-  if (!bookingForm.reportValidity()) return;
-
-  const purchaserName = nameInput.value.trim();
-  const purchaserEmail = emailInput.value.trim();
-  const quantity = Number(quantityInput.value);
-  const ticketDetails = {
-    general: { label: "General admission", price: 200 },
-    vip: { label: "VIP", price: 500 }
-  }[document.getElementById("ticket-type").value];
-
-  if (!ticketDetails) {
-    paymentFeedback.textContent = "Choose a valid ticket type.";
-    return;
-  }
-
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5) {
-    paymentFeedback.textContent =
-      "Please select between 1 and 5 tickets.";
-    return;
-  }
-
-  if (typeof QRCode === "undefined") {
-    paymentFeedback.textContent =
-      "QR library not loaded. Check your internet connection and refresh.";
-    return;
-  }
-
-  // Clear previous tickets
-  ticketList.replaceChildren();
-  ticketResults.hidden = false;
-
-  // Generate one unique ticket for each quantity
-  for (let i = 0; i < quantity; i++) {
-
-    const ticketId = "FB-" + crypto.randomUUID().toUpperCase();
-
-    const ticket = {
-      id: ticketId,
-      name: purchaserName,
-      email: purchaserEmail,
-      ticketType: ticketDetails.label,
-      price: ticketDetails.price
-    };
-
-    const card = document.createElement("article");
-    card.className = "ticket-card";
-
-    const title = document.createElement("h3");
-    title.textContent = "BEHIND THE SINS";
-
-    const warning = document.createElement("p");
-    warning.className = "demo-warning";
-    warning.textContent = "DEMO TICKET — NOT VALID FOR ENTRY";
-
-    const idLine = document.createElement("p");
-    idLine.textContent = "Ticket ID: " + ticketId;
-
-    const nameLine = document.createElement("p");
-    nameLine.textContent = "Purchaser: " + purchaserName;
-
-    const emailLine = document.createElement("p");
-    emailLine.textContent = "Email: " + purchaserEmail;
-
-    const ticketTypeLine = document.createElement("p");
-    ticketTypeLine.textContent =
-      `Ticket: ${ticketDetails.label} · KSh ${ticketDetails.price}`;
-
-    const qrContainer = document.createElement("div");
-    qrContainer.className = "ticket-qr";
-
-    new QRCode(qrContainer, {
-      text: ticketId,
-      width: 180,
-      height: 180,
-      correctLevel: QRCode.CorrectLevel.M
-    });
-
-    ticket.qrContainer = qrContainer;
-
-    const downloadButton = document.createElement("button");
-    downloadButton.className = "ticket-download";
-    downloadButton.type = "button";
-    downloadButton.textContent = "Download ticket";
-
-    downloadButton.addEventListener("click", () => {
-      downloadTicket(ticket);
-    });
-
-    card.append(
-      title,
-      warning,
-      idLine,
-      ticketTypeLine,
-      nameLine,
-      emailLine,
-      qrContainer,
-      downloadButton
+  submitButton.disabled = true;
+  paymentFeedback.textContent = "Creating your reservation and sending the payment request…";
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/v1/ticket-types/${encodeURIComponent(ticketTypeSelect.value)}/reservations`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buyer_name: document.getElementById("buyer-name").value.trim(),
+          buyer_email: document.getElementById("buyer-email").value.trim(),
+          quantity: Number(quantitySelect.value),
+          payment_provider: document.getElementById("payment-provider").value,
+          payment_phone: document.getElementById("payment-phone").value.trim()
+        })
+      }
     );
+    const data = await response.json();
+    if (!response.ok && response.status !== 202) {
+      throw new Error(data.error || "The payment request could not be started.");
+    }
+    if (!data.reservation) {
+      throw new Error(data.error || "The payment provider returned no reservation.");
+    }
 
-    ticketList.appendChild(card);
+    paymentReference = data.reservation.payment_reference;
+    paymentFeedback.textContent = data.message;
+    showPaymentStatus(
+      data.reservation.payment_status === "unknown"
+        ? "Payment status uncertain"
+        : "Waiting for payment",
+      data.reservation.payment_status === "unknown"
+        ? data.message
+        : `Payment request sent for KSh ${Number(data.reservation.payment_amount).toLocaleString("en-KE")}. Approve it on your phone.`,
+      paymentReference
+    );
+    submitButton.disabled = true;
+    pollingTimer = window.setInterval(checkPaymentStatus, PAYMENT_POLL_INTERVAL_MS);
+    await checkPaymentStatus();
+  } catch (error) {
+    paymentFeedback.textContent = error.message;
+    submitButton.disabled = false;
   }
-
-  paymentFeedback.textContent =
-    "Demo tickets created. Payment has not been requested or verified.";
-
-  ticketResults.scrollIntoView({
-    behavior: "smooth",
-    block: "start"
-  });
 });
+
+loadEvent();

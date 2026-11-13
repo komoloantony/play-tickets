@@ -3,6 +3,7 @@
 import os
 import math
 import hmac
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from functools import wraps
 
 from flask import Flask, jsonify, request
 from database import close_db, expire_pending_reservations, get_db, init_db, remaining_tickets
+from payments import PaymentError, check_payment, is_configured, start_payment
 
 
 # Keep a ticket on hold for this long while a buyer is paying.
@@ -18,6 +20,7 @@ RESERVATION_HOLD_MINUTES = 15
 PAYMENT_MODE = os.environ.get("PLAY_TICKETS_PAYMENT_MODE", "disabled").lower()
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("PLAY_TICKETS_SECRET", "local-development-key")
+logger = logging.getLogger(__name__)
 
 
 app.teardown_appcontext(close_db)
@@ -31,7 +34,8 @@ def add_local_frontend_cors(response):
         value.strip()
         for value in os.environ.get(
             "PLAY_TICKETS_CORS_ORIGINS",
-            "http://127.0.0.1:8000,http://localhost:8000",
+            "http://127.0.0.1:8000,http://localhost:8000,"
+            "http://127.0.0.1:8001,http://localhost:8001",
         ).split(",")
         if value.strip()
     }
@@ -153,6 +157,49 @@ def api_create_event():
     return jsonify({"event": event_json(event)}), 201
 
 
+@app.post("/api/v1/events/<int:event_id>/ticket-types")
+@admin_required
+def api_create_ticket_type(event_id):
+    """Add another purchasable ticket category to an existing event."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    name = str(data.get("name", "")).strip()
+    try:
+        price_decimal = Decimal(str(data["price"]))
+        capacity = int(data["capacity"])
+        if (
+            not name
+            or not price_decimal.is_finite()
+            or price_decimal < 1
+            or price_decimal != price_decimal.to_integral_value()
+            or capacity < 1
+        ):
+            raise ValueError
+        price = float(price_decimal)
+        if not math.isfinite(price):
+            raise ValueError
+    except (KeyError, InvalidOperation, TypeError, ValueError, OverflowError):
+        return jsonify({
+            "error": "Provide a ticket name, whole-number KES price of at least 1, and positive capacity."
+        }), 400
+
+    db = get_db()
+    event = db.execute("SELECT id FROM events WHERE id = ?", (event_id,)).fetchone()
+    if event is None:
+        return jsonify({"error": "Event not found."}), 404
+    cursor = db.execute(
+        "INSERT INTO ticket_types (event_id, name, price, capacity) VALUES (?, ?, ?, ?)",
+        (event_id, name, price, capacity),
+    )
+    db.commit()
+    ticket_type = db.execute(
+        "SELECT * FROM ticket_types WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return jsonify({"ticket_type": ticket_type_json(ticket_type)}), 201
+
+
 @app.get("/api/v1/events/<int:event_id>")
 def api_get_event(event_id):
     """Give the frontend one event, or say it could not be found."""
@@ -165,8 +212,8 @@ def api_get_event(event_id):
 @app.post("/api/v1/ticket-types/<int:ticket_type_id>/reservations")
 def api_reserve_tickets(ticket_type_id):
     """Hold tickets for 15 minutes while the buyer tries to pay."""
-    if PAYMENT_MODE != "sandbox":
-        return jsonify({"error": "Payments are not configured. Enable sandbox mode or configure a payment provider."}), 503
+    if PAYMENT_MODE not in {"sandbox", "live"}:
+        return jsonify({"error": "Payments are disabled on this server."}), 503
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Request body must be a JSON object."}), 400
@@ -190,6 +237,15 @@ def api_reserve_tickets(ticket_type_id):
             "error": "Provide a name, valid email, quantity from 1 to 10, "
                      "payment_provider (mpesa or airtel), and a Kenyan mobile number."
         }), 400
+    if PAYMENT_MODE == "live":
+        try:
+            configured = is_configured(payment_provider)
+        except PaymentError as error:
+            return jsonify({"error": str(error)}), 503
+        if not configured:
+            return jsonify({
+                "error": f"{payment_provider.title()} payment credentials and an HTTPS callback are required."
+            }), 503
 
     db = get_db()
     ticket_type = db.execute(
@@ -220,35 +276,320 @@ def api_reserve_tickets(ticket_type_id):
         return jsonify({"error": "Not enough tickets remain.", "available": available}), 409
     created_at = datetime.now(timezone.utc)
     expires_at = created_at + timedelta(minutes=RESERVATION_HOLD_MINUTES)
-    payment_reference = f"PT-{uuid.uuid4().hex[:16].upper()}"
+    payment_reference = f"PT-{uuid.uuid4().hex.upper()}"
     cursor = db.execute(
         "INSERT INTO orders (ticket_type_id, buyer_name, buyer_email, quantity, status, created_at, expires_at, "
-        "payment_provider, payment_phone, payment_reference, payment_amount, payment_currency, payment_status) "
-        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, 'KES', 'pending')",
+        "payment_provider, payment_phone, payment_reference, provider_checkout_id, payment_amount, payment_currency, payment_status) "
+        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, 'KES', 'pending')",
         (ticket_type_id, buyer_name, buyer_email, quantity, created_at.isoformat(), expires_at.isoformat(),
-         payment_provider, payment_phone, payment_reference, payment_amount),
+         payment_provider, payment_phone, payment_reference,
+         payment_reference if PAYMENT_MODE == "live" and payment_provider == "airtel" else None,
+         payment_amount),
     )
     db.commit()
+    reservation = {
+        "id": cursor.lastrowid,
+        "event_id": ticket_type["event_id"],
+        "event_name": ticket_type["event_name"],
+        "ticket_type": ticket_type["name"],
+        "quantity": quantity,
+        "status": "pending",
+        "payment_required": True,
+        "payment_provider": payment_provider,
+        "payment_phone": payment_phone,
+        "payment_reference": payment_reference,
+        "payment_amount": payment_amount,
+        "currency": "KES",
+        "payment_status": "pending",
+        "payment_mode": PAYMENT_MODE,
+        "expires_at": expires_at.isoformat(),
+    }
+
+    if PAYMENT_MODE == "live":
+        try:
+            payment = start_payment(
+                payment_provider,
+                payment_reference=payment_reference,
+                phone=payment_phone,
+                amount=payment_amount,
+            )
+        except PaymentError as error:
+            logger.warning(
+                "Payment initiation failed for reservation %s via %s: %s",
+                payment_reference,
+                payment_provider,
+                error,
+            )
+            if error.outcome_unknown:
+                payment_status = (
+                    "unknown" if payment_provider == "mpesa" else "processing"
+                )
+                db.execute(
+                    "UPDATE orders SET payment_status = ? WHERE id = ?",
+                    (payment_status, cursor.lastrowid),
+                )
+                db.commit()
+                reservation["payment_status"] = payment_status
+                return jsonify({
+                    "reservation": reservation,
+                    "message": (
+                        "The request may have reached M-Pesa, but its status could not be confirmed. "
+                        "Do not pay again until the organizer checks it."
+                        if payment_status == "unknown"
+                        else "The payment request may have reached your phone. Check its status before trying again."
+                    ),
+                }), 202
+            db.execute(
+                "UPDATE orders SET status = 'failed', payment_status = 'failed' WHERE id = ?",
+                (cursor.lastrowid,),
+            )
+            db.commit()
+            return jsonify({
+                "error": str(error),
+                "payment_reference": payment_reference,
+                "payment_status": "failed",
+                "reservation_status": "failed",
+            }), 502
+
+        db.execute(
+            "UPDATE orders SET provider_checkout_id = ?, payment_status = ? WHERE id = ?",
+            (payment.checkout_id, payment.status, cursor.lastrowid),
+        )
+        db.commit()
+        reservation["payment_status"] = payment.status
+
     return jsonify({
-        "reservation": {
-            "id": cursor.lastrowid,
-            "event_id": ticket_type["event_id"],
-            "event_name": ticket_type["event_name"],
-            "ticket_type": ticket_type["name"],
-            "quantity": quantity,
-            "status": "pending",
-            "payment_required": True,
-            "payment_provider": payment_provider,
-            "payment_phone": payment_phone,
-            "payment_reference": payment_reference,
-            "payment_amount": payment_amount,
-            "currency": "KES",
-            "payment_status": "pending",
-            "payment_mode": PAYMENT_MODE,
-            "expires_at": expires_at.isoformat(),
-        },
-        "message": "Reservation created. It is not confirmed until payment is verified.",
+        "reservation": reservation,
+        "message": (
+            "Payment request sent. Approve it on your phone to confirm the reservation."
+            if PAYMENT_MODE == "live"
+            else "Reservation created. It is not confirmed until payment is verified."
+        ),
     }), 201
+
+
+def _record_provider_result(db, order, succeeded, transaction_id=""):
+    """Apply one provider result without resurrecting an expired reservation."""
+    payment_status = "succeeded" if succeeded else "failed"
+    reservation_status = order["status"]
+    if succeeded:
+        reservation_is_active = (
+            reservation_status == "pending"
+            and order["expires_at"] > datetime.now(timezone.utc).isoformat()
+        )
+        if reservation_is_active:
+            reservation_status = "confirmed"
+        elif reservation_status == "pending":
+            reservation_status = "expired"
+    elif reservation_status == "pending":
+        reservation_status = "failed"
+
+    db.execute(
+        "UPDATE orders SET payment_status = ?, status = ?, "
+        "provider_transaction_id = COALESCE(NULLIF(?, ''), provider_transaction_id) "
+        "WHERE id = ?",
+        (payment_status, reservation_status, transaction_id, order["id"]),
+    )
+    db.commit()
+    return payment_status, reservation_status
+
+
+@app.get("/api/v1/payments/<payment_reference>")
+def api_payment_status(payment_reference):
+    """Return a buyer-safe payment state and refresh Airtel's provider status."""
+    db = get_db()
+    order = db.execute(
+        "SELECT id, status, expires_at, payment_provider, payment_amount, payment_status, "
+        "provider_checkout_id, provider_transaction_id FROM orders WHERE payment_reference = ?",
+        (payment_reference,),
+    ).fetchone()
+    if order is None:
+        return jsonify({"error": "Payment reference not found."}), 404
+
+    if (
+        PAYMENT_MODE == "live"
+        and order["payment_provider"] == "airtel"
+        and order["payment_status"] == "processing"
+        and order["provider_checkout_id"]
+    ):
+        try:
+            provider_status = check_payment(
+                "airtel",
+                payment_reference=payment_reference,
+                checkout_id=order["provider_checkout_id"],
+                amount=order["payment_amount"],
+            )
+        except PaymentError as error:
+            logger.warning(
+                "Could not refresh Airtel status for reservation %s: %s",
+                payment_reference,
+                error,
+            )
+            return jsonify({"error": str(error)}), 503
+        if provider_status.status in {"succeeded", "failed"}:
+            payment_status, reservation_status = _record_provider_result(
+                db,
+                order,
+                provider_status.status == "succeeded",
+                provider_status.transaction_id,
+            )
+            order = dict(order)
+            order["status"] = reservation_status
+            order["payment_status"] = payment_status
+
+    if (
+        order["status"] == "pending"
+        and order["expires_at"] <= datetime.now(timezone.utc).isoformat()
+    ):
+        expire_pending_reservations(db)
+        db.commit()
+        order = dict(order)
+        order["status"] = "expired"
+
+    return jsonify({
+        "payment_reference": payment_reference,
+        "payment_provider": order["payment_provider"],
+        "payment_status": order["payment_status"],
+        "reservation_status": order["status"],
+        "expires_at": order["expires_at"],
+        "refund_or_support_required": (
+            order["payment_status"] == "succeeded"
+            and order["status"] != "confirmed"
+        ),
+        "manual_review_required": order["payment_status"] == "unknown",
+    })
+
+
+@app.post("/api/v1/payments/callbacks/<provider>/<callback_token>")
+def api_provider_payment_callback(provider, callback_token):
+    """Accept token-protected provider callbacks and verify their correlation."""
+    expected_token = os.environ.get("PLAY_TICKETS_PAYMENT_CALLBACK_TOKEN", "")
+    if PAYMENT_MODE != "live" or len(expected_token) < 32:
+        return jsonify({"error": "Provider callbacks are not configured."}), 404
+    if provider not in {"mpesa", "airtel"}:
+        return jsonify({"error": "Provider must be mpesa or airtel."}), 404
+    if not hmac.compare_digest(callback_token, expected_token):
+        return jsonify({"error": "Invalid callback token."}), 404
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Callback body must be a JSON object."}), 400
+
+    db = get_db()
+    if provider == "mpesa":
+        body = data.get("Body")
+        callback = body.get("stkCallback") if isinstance(body, dict) else None
+        if not isinstance(callback, dict):
+            return jsonify({"error": "M-Pesa callback is malformed."}), 400
+        checkout_id = str(callback.get("CheckoutRequestID", "")).strip()
+        try:
+            result_code = int(callback["ResultCode"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "M-Pesa callback has no valid result code."}), 400
+        if not checkout_id:
+            return jsonify({"error": "M-Pesa callback has no checkout reference."}), 400
+        order = db.execute(
+            "SELECT id, status, expires_at, payment_amount, payment_phone, payment_status "
+            "FROM orders WHERE payment_provider = 'mpesa' AND provider_checkout_id = ?",
+            (checkout_id,),
+        ).fetchone()
+        if order is None:
+            return jsonify({"error": "M-Pesa checkout reference not found."}), 404
+        if order["payment_status"] == "succeeded":
+            return jsonify({"accepted": True, "payment_status": "succeeded"})
+
+        if result_code == 0:
+            callback_metadata = callback.get("CallbackMetadata")
+            metadata = (
+                callback_metadata.get("Item")
+                if isinstance(callback_metadata, dict)
+                else None
+            )
+            if not isinstance(metadata, list):
+                return jsonify({"error": "M-Pesa callback metadata is malformed."}), 400
+            values = {
+                item.get("Name"): item.get("Value")
+                for item in metadata
+                if isinstance(item, dict) and isinstance(item.get("Name"), str)
+            }
+            try:
+                paid_amount = Decimal(str(values["Amount"]))
+                paid_phone = re.sub(r"[\s()-]", "", str(values["PhoneNumber"]))
+                if paid_phone.startswith("+"):
+                    paid_phone = paid_phone[1:]
+                if paid_phone.startswith("0"):
+                    paid_phone = "254" + paid_phone[1:]
+            except (KeyError, InvalidOperation, TypeError, ValueError):
+                return jsonify({"error": "M-Pesa callback is missing payment details."}), 400
+            receipt = str(values.get("MpesaReceiptNumber", "")).strip()
+            if (
+                paid_amount != Decimal(order["payment_amount"])
+                or paid_phone != order["payment_phone"]
+                or not receipt
+            ):
+                return jsonify({"error": "M-Pesa callback does not match the reservation."}), 400
+            payment_status, reservation_status = _record_provider_result(
+                db, order, True, receipt
+            )
+        else:
+            payment_status, reservation_status = _record_provider_result(db, order, False)
+
+    else:
+        transaction = data.get("transaction")
+        if not isinstance(transaction, dict):
+            callback_data = data.get("data")
+            transaction = (
+                callback_data.get("transaction")
+                if isinstance(callback_data, dict)
+                else None
+            )
+        if not isinstance(transaction, dict):
+            return jsonify({"error": "Airtel callback is malformed."}), 400
+        checkout_id = str(
+            transaction.get("id")
+            or data.get("reference")
+            or ""
+        ).strip()
+        if not checkout_id:
+            return jsonify({"error": "Airtel callback has no transaction reference."}), 400
+        order = db.execute(
+            "SELECT id, status, expires_at, payment_amount, payment_reference, payment_status, "
+            "provider_checkout_id FROM orders WHERE payment_provider = 'airtel' "
+            "AND (provider_checkout_id = ? OR payment_reference = ?)",
+            (checkout_id, checkout_id),
+        ).fetchone()
+        if order is None:
+            return jsonify({"error": "Airtel transaction reference not found."}), 404
+        if order["payment_status"] == "succeeded":
+            return jsonify({"accepted": True, "payment_status": "succeeded"})
+        try:
+            provider_status = check_payment(
+                "airtel",
+                payment_reference=order["payment_reference"],
+                checkout_id=order["provider_checkout_id"],
+                amount=order["payment_amount"],
+            )
+        except PaymentError as error:
+            logger.warning(
+                "Could not verify Airtel callback for reservation %s: %s",
+                order["payment_reference"],
+                error,
+            )
+            return jsonify({"error": str(error)}), 503
+        if provider_status.status == "processing":
+            return jsonify({"accepted": True, "payment_status": "processing"}), 202
+        payment_status, reservation_status = _record_provider_result(
+            db,
+            order,
+            provider_status.status == "succeeded",
+            provider_status.transaction_id,
+        )
+
+    return jsonify({
+        "accepted": True,
+        "payment_status": payment_status,
+        "reservation_status": reservation_status,
+    })
 
 
 @app.post("/api/v1/sandbox/payments/<payment_reference>/result")
@@ -429,4 +770,4 @@ with app.app_context():
 
 
 if __name__ == "__main__":
-    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")
+    app.run(debug=PAYMENT_MODE != "live" and os.environ.get("FLASK_DEBUG") == "1")

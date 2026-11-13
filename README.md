@@ -9,7 +9,8 @@ This folder contains the Python backend and the partner-built static frontend fo
 - **`database.py`** — The database helper file. It creates and connects to SQLite, builds the tables, and counts or expires ticket reservations.
 - **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
 - **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
-- **`Frontend/`** — The partner's standalone HTML, CSS, and JavaScript website, including the event listing and event detail pages.
+- **`Frontend/`** — The API-connected event listing, checkout, and admin pages.
+- **`partner-frontend/`** — The event-branded storefront. Its event page reads ticket prices, availability, and payment status from the API.
 - **`play_tickets.db`** — The local database where the app saves events, ticket types, and reservations. The app creates this file when it starts; it is not included in GitHub.
 
 ## Run locally
@@ -23,20 +24,27 @@ SQLite creates `play_tickets.db` automatically. It is a small local database tha
 
 ## Frontend
 
-The partner frontend lives in `Frontend/`: `index.html` loads events from the API and `event.html` creates ticket reservations. From the project root, start the frontend's local web server in a second PowerShell window:
+The API-connected frontend lives in `Frontend/`: `index.html` loads events from the API and `event.html` creates reservations. The branded storefront is in `partner-frontend/`. Start either static site from its own directory in a second PowerShell window:
 
 ```powershell
-Set-Location Frontend
+Set-Location partner-frontend
 python -m http.server 8000
 ```
 
-Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requests from `localhost:8000` and `127.0.0.1:8000` by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create an event with the admin API before booking it.
+Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requests from local ports 8000 and 8001 by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create a `Behind the Sins` event and its ticket categories with the admin API before booking it.
 
-Checkout behavior is in `Frontend/checkout.js`; `Frontend/event.js` loads and displays event details. Checkout creates a 15-minute reservation and shows its payment reference and amount. In sandbox mode, the page offers success and failure buttons; each asks for the local admin token and calls the protected simulation endpoint. Sandbox payments do not contact M-Pesa or Airtel, collect money, or issue entry tickets or QR codes.
+`Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend, then starts an M-Pesa or Airtel Money payment request. It polls the payment-status endpoint until the provider confirms or declines the transaction. The booking reference is not an entry QR ticket. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
 
 ### Admin review page
 
-With the backend and frontend servers running, open `http://127.0.0.1:8000/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations. The token is held in browser memory for this tab and is not saved in the frontend files.
+The admin page is in `Frontend/`, not `partner-frontend/`. Start a second static server from `Frontend/`:
+
+```powershell
+Set-Location Frontend
+python -m http.server 8001
+```
+
+Open `http://127.0.0.1:8001/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations. The token is held in browser memory for this tab and is not saved in the frontend files.
 
 ## API for the frontend
 
@@ -48,7 +56,10 @@ All API routes use the `/api/v1` prefix and exchange JSON.
 | `GET` | `/api/v1/events` | List events, ticket types, prices, and available quantities. |
 | `GET` | `/api/v1/events/<event_id>` | Get one event and its ticket types. |
 | `POST` | `/api/v1/events` | Create an event and its first ticket type (admin token required). |
+| `POST` | `/api/v1/events/<event_id>/ticket-types` | Add a ticket category (admin token required). |
 | `POST` | `/api/v1/ticket-types/<ticket_type_id>/reservations` | Hold tickets while the buyer completes payment. |
+| `GET` | `/api/v1/payments/<payment_reference>` | Return a buyer-safe payment and reservation status. |
+| `POST` | `/api/v1/payments/callbacks/<provider>/<callback_token>` | Receive a token-protected live provider callback over HTTPS. |
 | `POST` | `/api/v1/sandbox/payments/<payment_reference>/result` | Simulate a payment result while sandbox mode is enabled (admin token required). |
 | `POST` | `/api/v1/sandbox/callbacks/<provider>/<callback_token>` | Receive a token-protected mock callback through an HTTPS tunnel. |
 | `GET` | `/api/v1/admin/events` | Show each event's ticket capacity, confirmed sales, active holds, and tickets left (admin token required). |
@@ -91,6 +102,18 @@ Send JSON like:
 
 The response is `201 Created` and contains the saved event, including its generated IDs.
 
+To add another category such as VIP, use the returned event ID:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:5000/api/v1/events/1/ticket-types" `
+  -Headers @{ Authorization = "Bearer $env:PLAY_TICKETS_ADMIN_TOKEN" } `
+  -ContentType "application/json" `
+  -Body '{"name":"VIP","price":500,"capacity":50}'
+```
+
+The branded partner page currently looks for an event named `Behind the Sins`; ticket names and prices are read from the database, not trusted from the page.
+
 ### Reserve tickets
 
 Send JSON to the reservation endpoint:
@@ -105,7 +128,43 @@ Send JSON to the reservation endpoint:
 }
 ```
 
-A successful response is `201 Created` and includes a reservation ID, `status: "pending"`, and an `expires_at` timestamp. A pending reservation holds its tickets for 15 minutes. If inventory is insufficient, the API responds with `409 Conflict` and the remaining quantity. A reservation is not a confirmed payment or an entry-ready ticket.
+A successful response is `201 Created` and includes a reservation ID, `status: "pending"`, an `expires_at` timestamp, and the payment state. In live mode the backend starts the provider request before responding. A pending reservation holds its tickets for 15 minutes. If inventory is insufficient, the API responds with `409 Conflict` and the remaining quantity. A reservation is not confirmed until the provider status is verified.
+
+### Live M-Pesa and Airtel Money payments
+
+Live payments require approved merchant accounts, production API credentials, a deployed backend reachable over HTTPS, and provider callback setup. Do not put credentials in the frontend or commit them to Git; `.env` is ignored. Configure secrets in the hosting provider's environment settings.
+
+```powershell
+$env:PLAY_TICKETS_PAYMENT_MODE = "live"
+$env:PLAY_TICKETS_PUBLIC_URL = "https://api.example.com"
+$env:PLAY_TICKETS_PAYMENT_CALLBACK_TOKEN = "<at-least-32-random-characters>"
+$env:PLAY_TICKETS_CORS_ORIGINS = "https://tickets.example.com"
+
+$env:MPESA_ENV = "production"
+$env:MPESA_CONSUMER_KEY = "<Daraja consumer key>"
+$env:MPESA_CONSUMER_SECRET = "<Daraja consumer secret>"
+$env:MPESA_SHORTCODE = "<approved shortcode>"
+$env:MPESA_PASSKEY = "<Daraja passkey>"
+$env:MPESA_TRANSACTION_TYPE = "CustomerPayBillOnline"
+
+$env:AIRTEL_ENV = "production"
+$env:AIRTEL_CLIENT_ID = "<Airtel client ID>"
+$env:AIRTEL_CLIENT_SECRET = "<Airtel client secret>"
+```
+
+Use a unique, unpredictable callback token of at least 32 characters. M-Pesa's STK Push callback URL is generated from `PLAY_TICKETS_PUBLIC_URL` and this token. Treat the full callback URL as a secret and redact it from access logs. Register the corresponding Airtel callback URL in the Airtel merchant portal:
+
+```text
+https://api.example.com/api/v1/payments/callbacks/airtel/<callback-token>
+```
+
+`MPESA_TRANSACTION_TYPE` defaults to `CustomerPayBillOnline`; set it to `CustomerBuyGoodsOnline` when the approved Safaricom account is a till.
+
+For provider sandbox testing, set `MPESA_ENV` and/or `AIRTEL_ENV` to `sandbox` while keeping `PLAY_TICKETS_PAYMENT_MODE` set to `live`; requests then go to the provider's sandbox rather than the local simulator. Use only provider-issued sandbox credentials. The `PLAY_TICKETS_PAYMENT_MODE=sandbox` flow remains separate and never contacts a payment provider.
+
+The backend verifies M-Pesa callback reference, phone, amount, and receipt against the reservation. Airtel callback notifications are checked against Airtel's server-side transaction-status API. Repeated callbacks do not create duplicate bookings. If money is confirmed after a reservation hold expires, the reservation is not revived; the status endpoint flags it for organizer support/refund review.
+
+Only whole-number KES ticket amounts are payable. Confirmed payments confirm reservations, but this application does not yet issue entry-ready QR tickets or automatically refund late payments. Run the Flask development server only for local testing; production deployment must use a supported WSGI server behind HTTPS. Complete provider onboarding, configure callback URLs, and test with provider sandbox accounts before enabling production collection.
 
 ### Local payment sandbox
 
@@ -129,7 +188,7 @@ Invoke-RestMethod -Method Post `
   -Body '{"result":"success"}'
 ```
 
-The local simulator does not contact either provider or move money. Set a random `PLAY_TICKETS_SANDBOX_CALLBACK_TOKEN` to enable the tunnel callback route. Its JSON body must contain the reservation's `payment_reference` and `result` (`success` or `failure`). This mock callback is not the payload format used by Safaricom or Airtel.
+The local simulator does not contact either provider or move money. Set a random `PLAY_TICKETS_SANDBOX_CALLBACK_TOKEN` to enable the mock tunnel callback route. Its JSON body must contain the reservation's `payment_reference` and `result` (`success` or `failure`). This mock callback is not the payload format used by Safaricom or Airtel.
 
 An HTTPS tunnel URL is temporary and works only while both the local Flask app and tunnel process are running. A production callback needs a deployed HTTPS service and provider-specific callback verification.
 
@@ -138,7 +197,7 @@ An HTTPS tunnel URL is temporary and works only while both the local Flask app a
 - The backend uses **Python**, **Flask**, and **SQLite**.
 - Event and ticket records are stored locally in SQLite.
 - The backend checks and holds tickets together, so two buyers cannot both reserve the very last ticket at the same time.
-- The launch market is Kenya and prices use Kenyan shillings (KES). The local sandbox can simulate M-Pesa and Airtel payment results, but it does not contact the providers or move money. Provider payment requests and verified callbacks still need implementation.
+- The launch market is Kenya and prices use Kenyan shillings (KES). M-Pesa Daraja STK Push and Airtel Africa collection requests are supported when configured; live transactions require approved provider accounts and production credentials.
 - Add sign-in before allowing organizers to create events on a public website.
 
 See `app.py` for API route comments and `database.py` for how the database and its tables work.

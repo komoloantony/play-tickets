@@ -6,7 +6,6 @@
   <title>Behind the Sins | Firebrand Tickets</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="event.css">
- <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="event.js" defer></script>
 </head>
 <body>
@@ -34,16 +33,12 @@
       <div class="event-detail-content">
         <p class="eyebrow">FIREBRAND NATION PRESENTS · A STAGE PLAY</p>
         <h2>Behind the Sins</h2>
-        <p class="event-detail-intro">
-          Join us for <em>Behind the Sins</em> on 13 December 2026.
-          Gates open at 3:00 PM at Jesus Is Alive Ministries, and free popcorn
-          is included.
-        </p>
+        <p class="event-detail-intro" id="event-description">Loading event details…</p>
 
         <div class="detail-list">
           <div>
             <span>Date</span>
-            <strong>Sunday, 13 December 2026</strong>
+            <strong id="event-date">—</strong>
           </div>
           <div>
             <span>Gates open</span>
@@ -51,50 +46,43 @@
           </div>
           <div>
             <span>Venue</span>
-            <strong>Jesus Is Alive Ministries, Haile Selassie Avenue (opposite KFA building)</strong>
+            <strong id="event-venue">—</strong>
           </div>
         </div>
 
-        <div class="ticket-price-grid" aria-label="Ticket prices">
-          <div class="ticket-price-option">
-            <span>General admission</span>
-            <strong>KSh 200</strong>
-          </div>
-          <div class="ticket-price-option ticket-price-vip">
-            <span>VIP</span>
-            <strong>KSh 500</strong>
-          </div>
+        <div class="ticket-price-grid" id="ticket-prices" aria-label="Ticket prices">
+          <p>Loading ticket prices…</p>
         </div>
 
         <p class="event-detail-note">
-          Free popcorn. Demo booking does not take payment or create valid entry tickets.
+          Free popcorn. Your booking is confirmed only after the payment provider verifies payment.
         </p>
 
         
 <button class="primary-button book-event-button" id="book-event" type="button">
-  Book tickets ↗
+  Buy tickets ↗
 </button>
 
 <p class="booking-feedback" id="booking-feedback" role="status"></p>
 
 <form class="booking-form" id="booking-form" hidden>
-  <h3>Reserve your tickets</h3>
-  <p>Enter your details once to create demo tickets. No payment will be taken.</p>
+  <h3>Pay for your tickets</h3>
+  <p>We’ll send a payment request to your phone. Approve it to confirm your booking.</p>
 
-  <label for="attendee-name">Purchaser's full name</label>
+  <label for="buyer-name">Your full name</label>
   <input
-    id="attendee-name"
-    name="name"
+    id="buyer-name"
+    name="buyer_name"
     type="text"
     placeholder="Enter your full name"
     autocomplete="name"
     required
   >
 
-  <label for="attendee-email">Email address</label>
+  <label for="buyer-email">Email address</label>
   <input
-    id="attendee-email"
-    name="email"
+    id="buyer-email"
+    name="buyer_email"
     type="email"
     placeholder="you@example.com"
     autocomplete="email"
@@ -102,22 +90,36 @@
   >
 
   <label for="ticket-type">Ticket type</label>
-  <select id="ticket-type" name="ticket-type" required>
-    <option value="general">General admission — KSh 200</option>
-    <option value="vip">VIP — KSh 500</option>
+  <select id="ticket-type" name="ticket_type" required disabled>
+    <option value="">Loading ticket types…</option>
   </select>
 
   <label for="ticket-quantity">Number of tickets</label>
-  <select id="ticket-quantity" name="quantity" required>
+  <select id="ticket-quantity" name="quantity" required disabled>
     <option value="1">1 ticket</option>
-    <option value="2">2 tickets</option>
-    <option value="3">3 tickets</option>
-    <option value="4">4 tickets</option>
-    <option value="5">5 tickets</option>
   </select>
 
-  <button class="primary-button" type="submit">
-    Create demo tickets
+  <label for="payment-provider">Payment method</label>
+  <select id="payment-provider" name="payment_provider" required>
+    <option value="mpesa">M-Pesa</option>
+    <option value="airtel">Airtel Money</option>
+  </select>
+
+  <label for="payment-phone">Kenyan mobile number</label>
+  <input
+    id="payment-phone"
+    name="payment_phone"
+    type="tel"
+    inputmode="tel"
+    autocomplete="tel"
+    placeholder="e.g. 0712345678"
+    pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
+    maxlength="13"
+    required
+  >
+
+  <button class="primary-button" type="submit" disabled>
+    Continue to payment
   </button>
 
   <p id="payment-feedback" class="booking-feedback" role="status"></p>
@@ -126,10 +128,10 @@
       </div>
     </section>
     
-<section class="ticket-results" id="ticket-results" hidden>
-  <h2>Your demo tickets</h2>
-  <p>Each ticket has its own unique QR code and download option.</p>
-  <div id="ticket-list" class="ticket-list"></div>
+<section class="ticket-results" id="payment-results" aria-live="polite" hidden>
+  <h2 id="payment-result-title">Payment status</h2>
+  <p id="payment-result-message"></p>
+  <p id="payment-result-reference"></p>
 </section>
 
   </main>

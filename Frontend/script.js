@@ -1,7 +1,8 @@
 "use strict";
 
 const API_BASE = window.PLAY_TICKETS_API_BASE ||
-  (window.location.port === "8000" || window.location.protocol === "file:"
+  (window.location.port === "8000" || window.location.port === "8001" ||
+    window.location.protocol === "file:"
     ? "http://127.0.0.1:5000"
     : window.location.origin);
 

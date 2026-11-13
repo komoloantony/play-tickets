@@ -1,14 +1,13 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Firebrand Play | Firebrand Tickets</title>
+  <title>Event | Firebrand Tickets</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="event.css">
-<script src="checkout.js" defer></script>
-<script src="event.js" defer></script>
+  <script src="checkout.js" defer></script>
+  <script src="event.js" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -23,128 +22,93 @@
     <a class="back-link" href="index.html">← All events</a>
 
     <section class="event-detail-layout">
-      <div class="event-detail-poster">
+      <div class="event-detail-poster" aria-hidden="true">
         <p class="poster-top">FIREBRAND PRESENTS</p>
         <div class="poster-line"></div>
         <p class="poster-small">AN UNFORGETTABLE EXPERIENCE</p>
-        <h1>FIREBRAND<br><span>PLAY</span></h1>
+        <h1 id="poster-title">LIVE<br><span>EVENT</span></h1>
         <div class="poster-line"></div>
         <p class="poster-bottom">ONE STAGE. ONE STORY. ONE EXPERIENCE.</p>
       </div>
 
       <div class="event-detail-content">
         <p class="eyebrow">FEATURED PERFORMANCE</p>
-        <h2>Firebrand Play</h2>
-        
-<p class="event-detail-intro">
-  Firebrand Play is a Christian/gospel event taking place on
-  13 December 2026 at Jesus Is Alive Ministries. Join us for
-  this upcoming event. Further programme details will be
-  announced by the organisers.
-</p>
+        <h2 id="event-name">Loading event…</h2>
+        <p class="event-detail-intro" id="event-description"></p>
 
+        <div class="detail-list">
+          <div>
+            <span>Date and time</span>
+            <strong id="event-date">—</strong>
+          </div>
+          <div>
+            <span>Venue</span>
+            <strong id="event-venue">—</strong>
+          </div>
+        </div>
 
-        
-<div class="detail-list">
-  <div>
-    <span>Event type</span>
-    <strong>Christian / Gospel Event</strong>
-  </div>
-  <div>
-    <span>Date</span>
-    <strong>Sunday, 13 December 2026</strong>
-  </div>
-  <div>
-    <span>Time</span>
-    <strong>3:00 PM (1500 hrs)</strong>
-  </div>
-  <div>
-    <span>Venue</span>
-    <strong>Jesus Is Alive Ministries</strong>
-  </div>
-  <div>
-    <span>Ticket price</span>
-    <strong>KSh 100 per person</strong>
-  </div>
-</div>
+        <div class="ticket-price-grid" id="ticket-prices" aria-label="Ticket prices">
+          <p>Loading ticket prices…</p>
+        </div>
 
+        <p class="event-detail-note">
+          Your reservation is confirmed only after the payment provider verifies payment.
+        </p>
 
-       
-<p class="event-detail-note">
-  Ticket price: KSh 100 per person. Please confirm the exact
-  venue location and any additional programme details with
-  the organisers before attending.
-</p>
+        <button class="primary-button book-event-button" id="book-event" type="button" disabled>
+          Buy tickets ↗
+        </button>
+        <p class="booking-feedback" id="booking-feedback" role="status"></p>
 
-        
-<button class="primary-button book-event-button" id="book-event" type="button">
-  Book tickets ↗
-</button>
+        <form class="booking-form" id="booking-form" hidden>
+          <h3>Pay for your tickets</h3>
+          <p>Approve the payment request on your phone to confirm your reservation.</p>
 
-<p class="booking-feedback" id="booking-feedback" role="status"></p>
+          <label for="buyer-name">Your full name</label>
+          <input id="buyer-name" name="buyer_name" type="text" autocomplete="name" required>
 
-<form class="booking-form" id="booking-form" hidden>
- 
-<form class="booking-form" id="booking-form" hidden>
-  <h3>Reserve your tickets</h3>
-  <p>Enter your details once for your entire booking.</p>
+          <label for="buyer-email">Email address</label>
+          <input id="buyer-email" name="buyer_email" type="email" autocomplete="email" required>
 
-  <label for="attendee-name">Purchaser's full name</label>
-  <input
-    id="attendee-name"
-    name="name"
-    type="text"
-    placeholder="Enter your full name"
-    autocomplete="name"
-    required
-  >
+          <label for="ticket-type">Ticket type</label>
+          <select id="ticket-type" name="ticket-type" required disabled>
+            <option value="">Loading ticket types…</option>
+          </select>
 
-  <label for="attendee-email">Email address</label>
-  <input
-    id="attendee-email"
-    name="email"
-    type="email"
-    placeholder="you@example.com"
-    autocomplete="email"
-    required
-  >
+          <label for="ticket-quantity">Number of tickets</label>
+          <select id="ticket-quantity" name="quantity" required disabled>
+            <option value="1">1 ticket</option>
+          </select>
 
-  <label for="ticket-quantity">Number of tickets</label>
-  <select id="ticket-quantity" name="quantity" required>
-    <option value="1">1 ticket</option>
-    <option value="2">2 tickets</option>
-    <option value="3">3 tickets</option>
-    <option value="4">4 tickets</option>
-    <option value="5">5 tickets</option>
-  </select>
+          <label for="payment-provider">Payment method</label>
+          <select id="payment-provider" name="payment_provider" required>
+            <option value="mpesa">M-Pesa</option>
+            <option value="airtel">Airtel Money</option>
+          </select>
 
-  <label for="mpesa-phone">M-Pesa phone number</label>
-  <input
-    id="mpesa-phone"
-    name="phone"
-    type="tel"
-    placeholder="e.g. 0712345678"
-    pattern="(?:07|01)[0-9]{8}"
-    maxlength="10"
-    required
-  >
+          <label for="payment-phone">Kenyan mobile number</label>
+          <input
+            id="payment-phone"
+            name="payment_phone"
+            type="tel"
+            inputmode="tel"
+            autocomplete="tel"
+            placeholder="e.g. 0712345678"
+            pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
+            maxlength="13"
+            required
+          >
 
-  <button class="primary-button" type="submit">
-    Continue to payment
-  </button>
-
-  <p id="payment-feedback" class="booking-feedback" role="status"></p>
-</form>
-
+          <button class="primary-button" type="submit" disabled>Continue to payment</button>
+          <p id="payment-feedback" class="booking-feedback" role="status"></p>
+        </form>
       </div>
     </section>
-    
-<section class="ticket-results" id="ticket-results" hidden>
-  <h2>Your demo tickets</h2>
-  <p>Each ticket has its own unique QR code and download option.</p>
-  <div id="ticket-list" class="ticket-list"></div>
-</section>
 
+    <section class="ticket-results" id="ticket-results" aria-live="polite" hidden>
+      <h2>Payment status</h2>
+      <p></p>
+    </section>
   </main>
 
   <footer class="site-footer">

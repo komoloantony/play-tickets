@@ -1,239 +1,119 @@
 "use strict";
 
+const EVENT_API_BASE = window.PLAY_TICKETS_API_BASE ||
+  (window.location.protocol === "file:" ||
+    window.location.port === "8000" ||
+    window.location.port === "8001"
+    ? "http://127.0.0.1:5000"
+    : window.location.origin);
+
+const eventName = document.getElementById("event-name");
+const eventDescription = document.getElementById("event-description");
+const eventDate = document.getElementById("event-date");
+const eventVenue = document.getElementById("event-venue");
+const ticketPrices = document.getElementById("ticket-prices");
+const ticketTypeSelect = document.getElementById("ticket-type");
+const quantitySelect = document.getElementById("ticket-quantity");
 const bookButton = document.getElementById("book-event");
 const bookingForm = document.getElementById("booking-form");
 const bookingFeedback = document.getElementById("booking-feedback");
-const paymentFeedback = document.getElementById("payment-feedback");
+const submitButton = bookingForm.querySelector('button[type="submit"]');
 
-const quantityInput = document.getElementById("ticket-quantity");
-const phoneInput = document.getElementById("mpesa-phone");
+let eventRecord;
 
-const attendeeFields = document.getElementById("attendee-fields");
-const ticketResults = document.getElementById("ticket-results");
-const ticketList = document.getElementById("ticket-list");
+function updateQuantityOptions() {
+  const selectedTicket = eventRecord.ticket_types.find(
+    (ticket) => String(ticket.id) === ticketTypeSelect.value
+  );
+  const maximum = selectedTicket
+    ? Math.min(10, Number(selectedTicket.available))
+    : 0;
+  quantitySelect.replaceChildren();
+  for (let quantity = 1; quantity <= maximum; quantity += 1) {
+    quantitySelect.add(new Option(
+      `${quantity} ${quantity === 1 ? "ticket" : "tickets"}`,
+      String(quantity)
+    ));
+  }
+  quantitySelect.disabled = maximum === 0;
+  submitButton.disabled = maximum === 0;
+}
 
-function createAttendeeFields() {
-  const quantity = Number(quantityInput.value);
+function renderTicketTypes() {
+  ticketPrices.replaceChildren();
+  ticketTypeSelect.replaceChildren();
+  for (const ticket of eventRecord.ticket_types) {
+    const priceCard = document.createElement("div");
+    priceCard.className = "ticket-price-option";
+    const name = document.createElement("span");
+    name.textContent = `${ticket.name} · ${ticket.available} available`;
+    const price = document.createElement("strong");
+    price.textContent = `KSh ${Number(ticket.price).toLocaleString("en-KE")}`;
+    priceCard.append(name, price);
+    ticketPrices.appendChild(priceCard);
 
-  attendeeFields.replaceChildren();
-
-  for (let i = 0; i < quantity; i++) {
-    const section = document.createElement("div");
-    section.className = "attendee-field-group";
-
-    const heading = document.createElement("h4");
-    heading.textContent = `Attendee ${i + 1}`;
-
-    const nameLabel = document.createElement("label");
-    nameLabel.textContent = "Full name";
-    nameLabel.htmlFor = `attendee-name-${i}`;
-
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.id = `attendee-name-${i}`;
-    nameInput.name = `attendeeName${i}`;
-    nameInput.placeholder = "Enter full name";
-    nameInput.autocomplete = "name";
-    nameInput.required = true;
-
-    const emailLabel = document.createElement("label");
-    emailLabel.textContent = "Email address";
-    emailLabel.htmlFor = `attendee-email-${i}`;
-
-    const emailInput = document.createElement("input");
-    emailInput.type = "email";
-    emailInput.id = `attendee-email-${i}`;
-    emailInput.name = `attendeeEmail${i}`;
-    emailInput.placeholder = "person@example.com";
-    emailInput.autocomplete = "email";
-    emailInput.required = true;
-
-    section.append(
-      heading,
-      nameLabel,
-      nameInput,
-      emailLabel,
-      emailInput
+    const option = new Option(
+      `${ticket.name} — KSh ${Number(ticket.price).toLocaleString("en-KE")}`,
+      String(ticket.id)
     );
+    option.disabled = Number(ticket.available) < 1;
+    ticketTypeSelect.add(option);
+  }
 
-    attendeeFields.appendChild(section);
+  ticketTypeSelect.disabled = eventRecord.ticket_types.length === 0;
+  const firstAvailable = eventRecord.ticket_types.find(
+    (ticket) => Number(ticket.available) > 0
+  );
+  if (firstAvailable) ticketTypeSelect.value = String(firstAvailable.id);
+  updateQuantityOptions();
+}
+
+async function loadEvent() {
+  const eventId = new URLSearchParams(window.location.search).get("id");
+  if (!eventId || !/^\d+$/.test(eventId)) {
+    bookingFeedback.textContent = "Choose an event from the events page.";
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `${EVENT_API_BASE}/api/v1/events/${encodeURIComponent(eventId)}`
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not load this event.");
+    eventRecord = data.event;
+    eventName.textContent = eventRecord.name;
+    document.title = `${eventRecord.name} | Firebrand Tickets`;
+    document.getElementById("poster-title").textContent = eventRecord.name;
+    eventDescription.textContent =
+      eventRecord.description || "Event details will be announced by the organiser.";
+    const startsAt = new Date(eventRecord.starts_at);
+    eventDate.textContent = Number.isNaN(startsAt.getTime())
+      ? eventRecord.starts_at
+      : new Intl.DateTimeFormat(undefined, {
+        dateStyle: "full",
+        timeStyle: "short"
+      }).format(startsAt);
+    eventVenue.textContent = eventRecord.venue;
+    renderTicketTypes();
+    bookButton.disabled = eventRecord.ticket_types.every(
+      (ticket) => Number(ticket.available) < 1
+    );
+    if (bookButton.disabled) bookingFeedback.textContent = "All tickets are sold out.";
+    window.setupPlayTicketsCheckout(eventRecord);
+  } catch (error) {
+    bookingFeedback.textContent = error.message;
+    bookButton.disabled = true;
+    submitButton.disabled = true;
+    ticketPrices.textContent = error.message;
   }
 }
 
 bookButton.addEventListener("click", () => {
   bookingForm.hidden = false;
-  createAttendeeFields();
-
-  bookingForm.scrollIntoView({
-    behavior: "smooth",
-    block: "center"
-  });
-
+  bookingForm.scrollIntoView({ behavior: "smooth", block: "center" });
   bookingFeedback.textContent = "";
 });
 
-quantityInput.addEventListener("change", createAttendeeFields);
-
-bookingForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-
-  if (!bookingForm.reportValidity()) return;
-
-  const quantity = Number(quantityInput.value);
-  const phone = phoneInput.value.trim();
-
-  if (!/^(07|01)\d{8}$/.test(phone)) {
-    paymentFeedback.textContent =
-      "Enter a valid Kenyan phone number, e.g. 0712345678.";
-    return;
-  }
-
-  if (typeof QRCode === "undefined") {
-    paymentFeedback.textContent =
-      "QR library not loaded. Check your internet connection and refresh.";
-    return;
-  }
-
-  const attendees = [];
-
-  for (let i = 0; i < quantity; i++) {
-    const name = document.getElementById(`attendee-name-${i}`).value.trim();
-    const email = document.getElementById(`attendee-email-${i}`).value.trim();
-
-    attendees.push({ name, email });
-  }
-
-  ticketList.replaceChildren();
-  ticketResults.hidden = false;
-
-  attendees.forEach((attendee) => {
-    const ticketId = "FB-" + crypto.randomUUID().toUpperCase();
-
-    const card = document.createElement("article");
-    card.className = "ticket-card";
-
-    const title = document.createElement("h3");
-    title.textContent = "FIREBRAND PLAY";
-
-    const warning = document.createElement("p");
-    warning.className = "demo-warning";
-    warning.textContent = "DEMO TICKET — NOT VALID FOR ENTRY";
-
-    const idLine = document.createElement("p");
-    idLine.textContent = "Ticket ID: " + ticketId;
-
-    const nameLine = document.createElement("p");
-    nameLine.textContent = "Attendee: " + attendee.name;
-
-    const emailLine = document.createElement("p");
-    emailLine.textContent = "Email: " + attendee.email;
-
-    const qrContainer = document.createElement("div");
-    qrContainer.className = "ticket-qr";
-
-    new QRCode(qrContainer, {
-      text: ticketId,
-      width: 180,
-      height: 180,
-      correctLevel: QRCode.CorrectLevel.M
-    });
-
-    const downloadButton = document.createElement("button");
-    downloadButton.className = "ticket-download";
-    downloadButton.type = "button";
-    downloadButton.textContent = "Download ticket";
-
-    downloadButton.addEventListener("click", () => {
-      const canvas = qrContainer.querySelector("canvas");
-      const image = qrContainer.querySelector("img");
-
-      let qrData;
-
-      if (canvas) {
-        qrData = canvas.toDataURL("image/png");
-      } else if (image) {
-        qrData = image.src;
-      } else {
-        alert("QR code is not ready. Please try again.");
-        return;
-      }
-
-      const escapeHtml = (value) =>
-        value.replace(/[&<>"']/g, (char) => ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;"
-        })[char]);
-
-      const ticketHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Firebrand Play Ticket</title>
-<style>
-body{font-family:Arial,sans-serif;background:#090909;color:#fff;padding:24px}
-.ticket{max-width:420px;margin:20px auto;padding:24px;border:2px solid #d8b45a;text-align:center}
-h1{color:#f3d98b}
-img{width:200px;height:200px;background:#fff;padding:8px}
-p{overflow-wrap:anywhere}
-.warning{color:#e5c97e;font-weight:bold;font-size:12px}
-@media print{body{padding:0}.ticket{margin:auto}}
-</style>
-</head>
-<body>
-<div class="ticket">
-<h1>FIREBRAND PLAY</h1>
-<p>FIREBRAND TICKETS</p>
-<p><strong>Attendee:</strong> ${escapeHtml(attendee.name)}</p>
-<p><strong>Email:</strong> ${escapeHtml(attendee.email)}</p>
-<p><strong>Ticket ID:</strong> ${ticketId}</p>
-<img src="${qrData}" alt="Ticket QR code">
-<p class="warning">DEMO TICKET — NOT VALID FOR ENTRY</p>
-<p>Event date, venue and price to be confirmed.</p>
-</div>
-</body>
-</html>`;
-
-      const file = new Blob([ticketHtml], {
-        type: "text/html;charset=utf-8"
-      });
-
-      const fileUrl = URL.createObjectURL(file);
-      const link = document.createElement("a");
-
-      link.href = fileUrl;
-      link.download = ticketId + ".html";
-
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      setTimeout(() => URL.revokeObjectURL(fileUrl), 1000);
-    });
-
-    card.append(
-      title,
-      warning,
-      idLine,
-      nameLine,
-      emailLine,
-      qrContainer,
-      downloadButton
-    );
-
-    ticketList.appendChild(card);
-  });
-
-  paymentFeedback.textContent =
-    "Demo tickets created. Payment has not been requested or verified.";
-
-  ticketResults.scrollIntoView({
-    behavior: "smooth",
-    block: "start"
-  });
-});
-
-createAttendeeFields();
+ticketTypeSelect.addEventListener("change", updateQuantityOptions);
+loadEvent();

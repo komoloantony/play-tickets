@@ -108,7 +108,9 @@ def remaining_tickets(ticket_type):
 def expire_pending_reservations(db):
     """Mark old unpaid holds as expired so their tickets can be bought again."""
     db.execute(
-        "UPDATE orders SET status = 'expired' "
+        "UPDATE orders SET status = 'expired', "
+        "payment_status = CASE WHEN payment_status IN ('pending', 'processing') "
+        "THEN 'expired' ELSE payment_status END "
         "WHERE status = 'pending' AND expires_at <= ?",
         (datetime.now(timezone.utc).isoformat(),),
     )

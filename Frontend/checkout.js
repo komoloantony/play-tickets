@@ -1,7 +1,8 @@
 "use strict";
 
 const CHECKOUT_API_BASE = window.PLAY_TICKETS_API_BASE ||
-  (window.location.port === "8000" || window.location.protocol === "file:"
+  (window.location.port === "8000" || window.location.port === "8001" ||
+    window.location.protocol === "file:"
     ? "http://127.0.0.1:5000"
     : window.location.origin);
 
@@ -10,6 +11,8 @@ const checkoutResults = document.getElementById("ticket-results");
 let checkoutEvent;
 let pendingReservation;
 let checkoutListenerAttached = false;
+let paymentPollingTimer;
+let paymentPollingInProgress = false;
 
 function showCheckoutResult(title, message, reference) {
   checkoutResults.replaceChildren();
@@ -41,6 +44,82 @@ function addSandboxControls(reservation) {
   failureButton.textContent = "Simulate failed payment";
   failureButton.addEventListener("click", () => simulatePayment("failure"));
   checkoutResults.append(note, successButton, failureButton);
+}
+
+function startLivePaymentPolling(reservation) {
+  window.clearInterval(paymentPollingTimer);
+  const checkStatus = async () => {
+    if (paymentPollingInProgress) return;
+    paymentPollingInProgress = true;
+    try {
+      const response = await fetch(
+        `${CHECKOUT_API_BASE}/api/v1/payments/${encodeURIComponent(reservation.payment_reference)}`
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not check the payment status.");
+
+      if (data.manual_review_required) {
+        reservation.payment_status = data.payment_status;
+        showCheckoutResult(
+          "Payment status uncertain — contact the organizer",
+          "The request may have reached M-Pesa, but confirmation could not be retrieved. Do not retry until the organizer checks it.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+      } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
+        reservation.payment_status = data.payment_status;
+        reservation.status = data.reservation_status;
+        showCheckoutResult(
+          "Payment confirmed",
+          "Your booking is confirmed. Keep the reservation reference for the event organizer.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+      } else if (data.refund_or_support_required) {
+        reservation.payment_status = data.payment_status;
+        reservation.status = data.reservation_status;
+        showCheckoutResult(
+          "Payment received — contact the organizer",
+          "The reservation hold expired before payment was confirmed. No tickets were reserved; contact the organizer about the payment.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+      } else if (data.payment_status === "failed") {
+        reservation.payment_status = data.payment_status;
+        reservation.status = data.reservation_status;
+        showCheckoutResult(
+          "Payment not completed",
+          "The payment was declined or cancelled. The reservation hold has been released.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+        pendingReservation = null;
+        checkoutForm.querySelector('button[type="submit"]').disabled = false;
+      } else if (data.reservation_status === "expired") {
+        reservation.payment_status = data.payment_status;
+        reservation.status = data.reservation_status;
+        showCheckoutResult(
+          "Reservation expired",
+          "The payment window expired before payment was confirmed. Please create a new reservation.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+        pendingReservation = null;
+        checkoutForm.querySelector('button[type="submit"]').disabled = false;
+      }
+    } catch (error) {
+      showCheckoutResult(
+        "Checking payment",
+        "We could not refresh the payment status. Keep this page open; we’ll try again.",
+        reservation.payment_reference
+      );
+    } finally {
+      paymentPollingInProgress = false;
+    }
+  };
+
+  checkStatus();
+  paymentPollingTimer = window.setInterval(checkStatus, 8000);
 }
 
 async function submitReservation(event) {
@@ -77,18 +156,34 @@ async function submitReservation(event) {
     if (!response.ok) throw new Error(data.error || "Reservation could not be created.");
 
     pendingReservation = data.reservation;
-    const expiry = new Date(pendingReservation.expires_at).toLocaleTimeString();
-    showCheckoutResult(
-      "Reservation created",
-      `${pendingReservation.quantity} ticket(s) are held until ${expiry}. Total: KSh ${pendingReservation.payment_amount}. Sandbox mode does not contact a payment provider or collect money.`,
-      pendingReservation.payment_reference
-    );
-    if (pendingReservation.payment_mode === "sandbox") addSandboxControls(pendingReservation);
-    feedback.textContent = "Reservation is pending. Complete a payment to confirm it.";
+    if (pendingReservation.payment_mode === "live") {
+      showCheckoutResult(
+        pendingReservation.payment_status === "unknown"
+          ? "Payment status uncertain"
+          : "Waiting for payment",
+        pendingReservation.payment_status === "unknown"
+          ? data.message
+          : `Payment request sent for KSh ${pendingReservation.payment_amount}. Approve it on your phone to confirm the reservation.`,
+        pendingReservation.payment_reference
+      );
+      startLivePaymentPolling(pendingReservation);
+      feedback.textContent = "Approve the payment request on your phone.";
+    } else {
+      const expiry = new Date(pendingReservation.expires_at).toLocaleTimeString();
+      showCheckoutResult(
+        "Reservation created",
+        `${pendingReservation.quantity} ticket(s) are held until ${expiry}. Total: KSh ${pendingReservation.payment_amount}. Sandbox mode does not contact a payment provider or collect money.`,
+        pendingReservation.payment_reference
+      );
+      addSandboxControls(pendingReservation);
+      feedback.textContent = "Reservation is pending. Complete a payment to confirm it.";
+    }
   } catch (error) {
     feedback.textContent = error.message;
   } finally {
-    submit.disabled = false;
+    submit.disabled = Boolean(
+      pendingReservation && pendingReservation.payment_mode === "live"
+    );
   }
 }
 
