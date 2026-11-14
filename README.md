@@ -6,7 +6,7 @@ This folder contains the Python backend and the partner-built static frontend fo
 
 - **`app.py`** — The Python app. It contains API routes for events, ticket reservations, and protected admin data.
 - **`requirements.txt`** — Flask and the QR-code renderer used for entry tickets.
-- **`database.py`** — The database helper file. It creates and connects to SQLite, builds the tables, and counts or expires ticket reservations.
+- **`database.py`** — Database connections and schema for PostgreSQL and local SQLite.
 - **`.gitignore`** — A list of local files Git should leave out when sending the project to GitHub, such as the local database and private settings.
 - **`README.md`** — This guide. It explains how to start the app and how the frontend can talk to the API.
 - **`Frontend/`** — The API-connected event listing, checkout, and admin pages.
@@ -20,7 +20,28 @@ This folder contains the Python backend and the partner-built static frontend fo
 3. Start the backend: `python app.py`.
 4. Check that it is responding at `http://127.0.0.1:5000/api/v1/health`.
 
-SQLite creates `play_tickets.db` automatically. It is a small local database that stores events and reservations. Git does not upload the local database or private settings. Admin routes and event creation require a shared secret token for development; this is not a full sign-in system, so the API is not ready to open publicly as-is.
+Without a database URL, the app uses local SQLite and creates `play_tickets.db`. Set `PLAY_TICKETS_DATABASE_URL` or `DATABASE_URL` to use PostgreSQL instead. The local database and private settings are not uploaded to GitHub. Admin routes and event creation require a shared secret token for development; this is not a full sign-in system, so the API is not ready to open publicly as-is.
+
+## PostgreSQL and Render
+
+The backend uses PostgreSQL when `DATABASE_URL` (or `PLAY_TICKETS_DATABASE_URL`) is set; Render's internal PostgreSQL connection string can be used as `DATABASE_URL`. Keep the connection string in Render's environment settings—never commit or paste it into source files. The app creates or upgrades its tables during startup. Configure the Render web service with:
+
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `gunicorn app:app`
+- **Environment:** `DATABASE_URL` set from the Render PostgreSQL database's internal connection string.
+
+Set `PLAY_TICKETS_ADMIN_TOKEN`, `PLAY_TICKETS_SECRET`, payment credentials, and trusted CORS origins through the Render environment settings as appropriate. Do not enable live payments until provider credentials, HTTPS callbacks, and production settings have been verified.
+
+### Copy existing SQLite records to PostgreSQL
+
+The repository does not contain `play_tickets.db`, but the local file can be copied to an **empty** PostgreSQL database. The migration script preserves event, ticket-type, reservation, and issued-ticket IDs and refuses to copy into a database that already contains records. Keep the SQLite file as a backup until the destination is verified.
+
+1. Make sure PostgreSQL is available and the `psycopg` dependency is installed.
+2. Set `DATABASE_URL` to the PostgreSQL connection string in a private local shell. Do not commit it.
+3. If the SQLite file is not at the default path, set `PLAY_TICKETS_DATABASE` to its path.
+4. Run `python migrate_sqlite_to_postgres.py` once, then verify the event and reservation counts in PostgreSQL before deploying the web service.
+
+The migration does not remove or modify the SQLite file. Do not run it against a database already containing production records.
 
 ## Frontend
 
@@ -195,8 +216,8 @@ An HTTPS tunnel URL is temporary and works only while both the local Flask app a
 
 ## Current state and next work
 
-- The backend uses **Python**, **Flask**, and **SQLite**.
-- Event and ticket records are stored locally in SQLite.
+- The backend uses **Python**, **Flask**, and **PostgreSQL** in production, with SQLite available for local development.
+- Event, reservation, payment, and ticket records are stored in the configured database.
 - The backend checks and holds tickets together, so two buyers cannot both reserve the very last ticket at the same time.
 - The launch market is Kenya and prices use Kenyan shillings (KES). M-Pesa Daraja STK Push and Airtel Africa collection requests are supported when configured; live transactions require approved provider accounts and production credentials.
 - Add sign-in before allowing organizers to create events on a public website.

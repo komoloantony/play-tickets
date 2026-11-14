@@ -1,4 +1,4 @@
-"""SQLite setup and helper functions for Play Tickets."""
+"""Database connections and schema for Play Tickets."""
 
 import os
 import sqlite3
@@ -9,16 +9,66 @@ from flask import g
 
 
 BASE_DIR = Path(__file__).resolve().parent
-# Let us move the database later without changing the code.
 DATABASE = Path(os.environ.get("PLAY_TICKETS_DATABASE", BASE_DIR / "play_tickets.db"))
+
+
+class DatabaseConnection:
+    """Adapt qmark SQL parameters for psycopg while keeping the SQLite API."""
+
+    def __init__(self, connection, postgres=False):
+        self.connection = connection
+        self.is_postgres = postgres
+
+    def execute(self, statement, parameters=()):
+        if self.is_postgres:
+            statement = statement.replace("?", "%s")
+        return self.connection.execute(statement, parameters)
+
+    def executemany(self, statement, parameters):
+        if self.is_postgres:
+            statement = statement.replace("?", "%s")
+        return self.connection.executemany(statement, parameters)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+
+
+def _database_url():
+    url = os.environ.get("PLAY_TICKETS_DATABASE_URL")
+    if not url and "PLAY_TICKETS_DATABASE" not in os.environ:
+        url = os.environ.get("DATABASE_URL")
+    if url and url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
+def connect_database(database_url=None, sqlite_path=None):
+    """Connect to PostgreSQL when configured, otherwise use local SQLite."""
+    database_url = database_url or _database_url()
+    if database_url:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        connection = psycopg.connect(database_url, row_factory=dict_row)
+        return DatabaseConnection(connection, postgres=True)
+
+    path = Path(sqlite_path) if sqlite_path else DATABASE
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return DatabaseConnection(connection)
 
 
 def get_db():
     """Open one database connection for this web request and reuse it."""
     if "db" not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = connect_database()
     return g.db
 
 
@@ -29,91 +79,197 @@ def close_db(_error=None):
         db.close()
 
 
-def init_db():
-    """Create the tables, or add the new expiry field to an older database."""
-    db = get_db()
-    db.executescript(
-        """
-        -- An event is a show, like a play happening at a theatre.
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            venue TEXT NOT NULL,
-            starts_at TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL
-        );
-        -- Each event can offer one or more kinds of tickets.
-        CREATE TABLE IF NOT EXISTS ticket_types (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-            name TEXT NOT NULL,
-            price REAL NOT NULL CHECK(price >= 0),
-            capacity INTEGER NOT NULL CHECK(capacity > 0)
-        );
-        -- An order records a buyer's request for tickets and its payment state.
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_type_id INTEGER NOT NULL REFERENCES ticket_types(id),
-            buyer_name TEXT NOT NULL,
-            buyer_email TEXT NOT NULL,
-            quantity INTEGER NOT NULL CHECK(quantity > 0),
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            expires_at TEXT,
-            payment_provider TEXT,
-            payment_phone TEXT,
-            payment_reference TEXT,
-            provider_checkout_id TEXT,
-            provider_transaction_id TEXT,
-            payment_amount INTEGER,
-            payment_currency TEXT,
-            payment_status TEXT NOT NULL DEFAULT 'not_started'
-        );
-        -- Each paid reservation receives one independently checkable entry ticket.
-        CREATE TABLE IF NOT EXISTS tickets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-            ticket_number INTEGER NOT NULL,
-            ticket_code TEXT NOT NULL UNIQUE,
-            status TEXT NOT NULL DEFAULT 'issued'
-                CHECK(status IN ('issued', 'checked_in')),
-            issued_at TEXT NOT NULL,
-            checked_in_at TEXT,
-            UNIQUE(order_id, ticket_number)
-        );
-        """
-    )
-    order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}
-    order_migrations = {
-        "expires_at": "TEXT",
-        "payment_provider": "TEXT",
-        "payment_phone": "TEXT",
-        "payment_reference": "TEXT",
-        "provider_checkout_id": "TEXT",
-        "provider_transaction_id": "TEXT",
-        "payment_amount": "INTEGER",
-        "payment_currency": "TEXT",
-        "payment_status": "TEXT NOT NULL DEFAULT 'not_started'",
-    }
-    for column, definition in order_migrations.items():
-        if column not in order_columns:
-            db.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
-    # Old holds have no timer, so let them expire now and free their tickets.
+def initialize_database(db):
+    """Create the current schema and add columns missing from older databases."""
+    if db.is_postgres:
+        statements = (
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                name TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                starts_at TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ticket_types (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                price DOUBLE PRECISION NOT NULL CHECK(price >= 0),
+                capacity INTEGER NOT NULL CHECK(capacity > 0)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                ticket_type_id BIGINT NOT NULL REFERENCES ticket_types(id),
+                buyer_name TEXT NOT NULL,
+                buyer_email TEXT NOT NULL,
+                quantity INTEGER NOT NULL CHECK(quantity > 0),
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                payment_provider TEXT,
+                payment_phone TEXT,
+                payment_reference TEXT,
+                provider_checkout_id TEXT,
+                provider_transaction_id TEXT,
+                payment_amount INTEGER,
+                payment_currency TEXT,
+                payment_status TEXT NOT NULL DEFAULT 'not_started'
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+                ticket_number INTEGER NOT NULL,
+                ticket_code TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'issued'
+                    CHECK(status IN ('issued', 'checked_in')),
+                issued_at TEXT NOT NULL,
+                checked_in_at TEXT,
+                UNIQUE(order_id, ticket_number)
+            )
+            """,
+        )
+        for statement in statements:
+            db.execute(statement)
+
+        order_migrations = {
+            "expires_at": "TEXT",
+            "payment_provider": "TEXT",
+            "payment_phone": "TEXT",
+            "payment_reference": "TEXT",
+            "provider_checkout_id": "TEXT",
+            "provider_transaction_id": "TEXT",
+            "payment_amount": "INTEGER",
+            "payment_currency": "TEXT",
+            "payment_status": "TEXT NOT NULL DEFAULT 'not_started'",
+        }
+        for column, definition in order_migrations.items():
+            db.execute(
+                f"ALTER TABLE orders ADD COLUMN IF NOT EXISTS {column} {definition}"
+            )
+    else:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                venue TEXT NOT NULL,
+                starts_at TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ticket_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                price REAL NOT NULL CHECK(price >= 0),
+                capacity INTEGER NOT NULL CHECK(capacity > 0)
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_type_id INTEGER NOT NULL REFERENCES ticket_types(id),
+                buyer_name TEXT NOT NULL,
+                buyer_email TEXT NOT NULL,
+                quantity INTEGER NOT NULL CHECK(quantity > 0),
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                payment_provider TEXT,
+                payment_phone TEXT,
+                payment_reference TEXT,
+                provider_checkout_id TEXT,
+                provider_transaction_id TEXT,
+                payment_amount INTEGER,
+                payment_currency TEXT,
+                payment_status TEXT NOT NULL DEFAULT 'not_started'
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+                ticket_number INTEGER NOT NULL,
+                ticket_code TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'issued'
+                    CHECK(status IN ('issued', 'checked_in')),
+                issued_at TEXT NOT NULL,
+                checked_in_at TEXT,
+                UNIQUE(order_id, ticket_number)
+            )
+            """
+        )
+        order_columns = {
+            row["name"] for row in db.execute("PRAGMA table_info(orders)")
+        }
+        order_migrations = {
+            "expires_at": "TEXT",
+            "payment_provider": "TEXT",
+            "payment_phone": "TEXT",
+            "payment_reference": "TEXT",
+            "provider_checkout_id": "TEXT",
+            "provider_transaction_id": "TEXT",
+            "payment_amount": "INTEGER",
+            "payment_currency": "TEXT",
+            "payment_status": "TEXT NOT NULL DEFAULT 'not_started'",
+        }
+        for column, definition in order_migrations.items():
+            if column not in order_columns:
+                db.execute(f"ALTER TABLE orders ADD COLUMN {column} {definition}")
+
     db.execute(
-        "UPDATE orders SET expires_at = created_at WHERE status = 'pending' AND expires_at IS NULL"
+        "UPDATE orders SET expires_at = created_at "
+        "WHERE status = 'pending' AND expires_at IS NULL"
     )
     db.commit()
+
+
+def init_db():
+    """Initialize the configured database when the Flask application starts."""
+    initialize_database(get_db())
+
+
+def inserted_id(cursor):
+    """Fetch an INSERT ... RETURNING id result and close its cursor."""
+    row = cursor.fetchone()
+    cursor.close()
+    if row is None:
+        raise RuntimeError("The database did not return the inserted row ID.")
+    return row["id"]
+
+
+def lock_row(db, statement, parameters=()):
+    """Start a write transaction and lock a row across concurrent requests."""
+    if db.is_postgres:
+        return db.execute(statement + " FOR UPDATE", parameters)
+    db.execute("BEGIN IMMEDIATE")
+    return db.execute(statement, parameters)
 
 
 def remaining_tickets(ticket_type):
     """Count tickets already sold and tickets still being held for payment."""
     sold = get_db().execute(
-        "SELECT COALESCE(SUM(quantity), 0) FROM orders "
+        "SELECT COALESCE(SUM(quantity), 0) AS sold FROM orders "
         "WHERE ticket_type_id = ? AND (status = 'confirmed' "
         "OR (status = 'pending' AND expires_at > ?))",
         (ticket_type["id"], datetime.now(timezone.utc).isoformat()),
-    ).fetchone()[0]
+    ).fetchone()["sold"]
     return ticket_type["capacity"] - sold
 
 

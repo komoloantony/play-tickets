@@ -15,7 +15,15 @@ from functools import wraps
 from flask import Flask, jsonify, request
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from database import close_db, expire_pending_reservations, get_db, init_db, remaining_tickets
+from database import (
+    close_db,
+    expire_pending_reservations,
+    get_db,
+    inserted_id,
+    init_db,
+    lock_row,
+    remaining_tickets,
+)
 from payments import PaymentError, check_payment, is_configured, start_payment
 
 
@@ -148,10 +156,11 @@ def api_create_event():
     # Save the show and its first ticket type together in the database.
     db = get_db()
     cursor = db.execute(
-        "INSERT INTO events (name, venue, starts_at, description, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events (name, venue, starts_at, description, created_at) "
+        "VALUES (?, ?, ?, ?, ?) RETURNING id",
         (name, venue, starts_at, description, datetime.now(timezone.utc).isoformat()),
     )
-    event_id = cursor.lastrowid
+    event_id = inserted_id(cursor)
     db.execute(
         "INSERT INTO ticket_types (event_id, name, price, capacity) VALUES (?, ?, ?, ?)",
         (event_id, ticket_name, price, capacity),
@@ -194,13 +203,17 @@ def api_create_ticket_type(event_id):
     if event is None:
         return jsonify({"error": "Event not found."}), 404
     cursor = db.execute(
-        "INSERT INTO ticket_types (event_id, name, price, capacity) VALUES (?, ?, ?, ?)",
+        "INSERT INTO ticket_types (event_id, name, price, capacity) "
+        "VALUES (?, ?, ?, ?) RETURNING id",
         (event_id, name, price, capacity),
     )
+    ticket_type_id = inserted_id(cursor)
     db.commit()
-    ticket_type = db.execute(
-        "SELECT * FROM ticket_types WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
+    ticket_type_cursor = db.execute(
+        "SELECT * FROM ticket_types WHERE id = ?", (ticket_type_id,)
+    )
+    ticket_type = ticket_type_cursor.fetchone()
+    ticket_type_cursor.close()
     return jsonify({"ticket_type": ticket_type_json(ticket_type)}), 201
 
 
@@ -272,7 +285,12 @@ def api_reserve_tickets(ticket_type_id):
     # buyers cannot both grab what looks like the very last ticket.
     expire_pending_reservations(db)
     db.commit()
-    db.execute("BEGIN IMMEDIATE")
+    locked_ticket_type = lock_row(
+        db, "SELECT id FROM ticket_types WHERE id = ?", (ticket_type_id,)
+    ).fetchone()
+    if locked_ticket_type is None:
+        db.rollback()
+        return jsonify({"error": "Ticket type not found."}), 404
     available = remaining_tickets(ticket_type)
     if quantity > available:
         db.rollback()
@@ -284,15 +302,16 @@ def api_reserve_tickets(ticket_type_id):
     cursor = db.execute(
         "INSERT INTO orders (ticket_type_id, buyer_name, buyer_email, quantity, status, created_at, expires_at, "
         "payment_provider, payment_phone, payment_reference, provider_checkout_id, payment_amount, payment_currency, payment_status) "
-        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, 'KES', 'pending')",
+        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, 'KES', 'pending') RETURNING id",
         (ticket_type_id, buyer_name, buyer_email, quantity, created_at.isoformat(), expires_at.isoformat(),
          payment_provider, payment_phone, payment_reference,
          payment_reference if PAYMENT_MODE == "live" and payment_provider == "airtel" else None,
          payment_amount),
     )
+    order_id = inserted_id(cursor)
     db.commit()
     reservation = {
-        "id": cursor.lastrowid,
+        "id": order_id,
         "event_id": ticket_type["event_id"],
         "event_name": ticket_type["event_name"],
         "ticket_type": ticket_type["name"],
@@ -330,7 +349,7 @@ def api_reserve_tickets(ticket_type_id):
                 )
                 db.execute(
                     "UPDATE orders SET payment_status = ? WHERE id = ?",
-                    (payment_status, cursor.lastrowid),
+                    (payment_status, order_id),
                 )
                 db.commit()
                 reservation["payment_status"] = payment_status
@@ -345,7 +364,7 @@ def api_reserve_tickets(ticket_type_id):
                 }), 202
             db.execute(
                 "UPDATE orders SET status = 'failed', payment_status = 'failed' WHERE id = ?",
-                (cursor.lastrowid,),
+                (order_id,),
             )
             db.commit()
             return jsonify({
@@ -357,7 +376,7 @@ def api_reserve_tickets(ticket_type_id):
 
         db.execute(
             "UPDATE orders SET provider_checkout_id = ?, payment_status = ? WHERE id = ?",
-            (payment.checkout_id, payment.status, cursor.lastrowid),
+            (payment.checkout_id, payment.status, order_id),
         )
         db.commit()
         reservation["payment_status"] = payment.status
@@ -405,9 +424,9 @@ def _issue_tickets(db, order_id):
             continue
         ticket_code = f"PTK-{secrets.token_hex(16).upper()}"
         db.execute(
-            "INSERT OR IGNORE INTO tickets "
+            "INSERT INTO tickets "
             "(order_id, ticket_number, ticket_code, status, issued_at) "
-            "VALUES (?, ?, ?, 'issued', ?)",
+            "VALUES (?, ?, ?, 'issued', ?) ON CONFLICT DO NOTHING",
             (order_id, ticket_number, ticket_code, issued_at),
         )
 
@@ -548,7 +567,12 @@ def api_admin_ticket_check_in():
         return jsonify({"error": "Provide a valid ticket QR code."}), 400
 
     db = get_db()
-    db.execute("BEGIN IMMEDIATE")
+    locked_ticket = lock_row(
+        db, "SELECT id FROM tickets WHERE ticket_code = ?", (ticket_code,)
+    ).fetchone()
+    if locked_ticket is None:
+        db.rollback()
+        return jsonify({"error": "Ticket code not found."}), 404
     ticket = db.execute(
         "SELECT tickets.id, tickets.ticket_number, tickets.status, tickets.checked_in_at, "
         "orders.status AS reservation_status, orders.payment_status, orders.buyer_name, "
@@ -883,7 +907,7 @@ def api_admin_reservations(event_id):
         "SELECT COUNT(*) FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
         "WHERE t.event_id = ?",
         (event_id,),
-    ).fetchone()[0]
+    ).fetchone()["count"]
     reservations = [{
         "id": row["id"],
         "buyer_name": row["buyer_name"],

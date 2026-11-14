@@ -11,7 +11,7 @@ os.environ["PLAY_TICKETS_PAYMENT_MODE"] = "live"
 
 import app as app_module
 import payments
-from database import get_db
+from database import get_db, inserted_id
 
 
 CALLBACK_TOKEN = "a" * 64
@@ -40,14 +40,16 @@ class PaymentFlowTests(unittest.TestCase):
             db.execute("DELETE FROM events")
             event_cursor = db.execute(
                 "INSERT INTO events (name, venue, starts_at, created_at) "
-                "VALUES ('Behind the Sins', 'Nairobi', '2026-12-13T15:00:00', '2026-01-01T00:00:00')"
+                "VALUES ('Behind the Sins', 'Nairobi', '2026-12-13T15:00:00', '2026-01-01T00:00:00') "
+                "RETURNING id"
             )
-            self.event_id = event_cursor.lastrowid
+            self.event_id = inserted_id(event_cursor)
             ticket_cursor = db.execute(
-                "INSERT INTO ticket_types (event_id, name, price, capacity) VALUES (?, ?, ?, ?)",
+                "INSERT INTO ticket_types (event_id, name, price, capacity) "
+                "VALUES (?, ?, ?, ?) RETURNING id",
                 (self.event_id, "General admission", 200, 20),
             )
-            self.ticket_type_id = ticket_cursor.lastrowid
+            self.ticket_type_id = inserted_id(ticket_cursor)
             db.commit()
 
     def tearDown(self):
@@ -161,7 +163,12 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("airtel-test-secret", response.get_data(as_text=True))
         with app_module.app.app_context():
-            self.assertEqual(get_db().execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+            self.assertEqual(
+                get_db().execute(
+                    "SELECT COUNT(*) AS order_count FROM orders"
+                ).fetchone()["order_count"],
+                0,
+            )
 
     def test_unknown_mpesa_outcome_requires_manual_review_without_retry(self):
         error = payments.PaymentError("Provider timed out.", outcome_unknown=True)
