@@ -27,7 +27,7 @@ class PostgreSQLAdapterTests(unittest.TestCase):
             "INSERT INTO events (id) VALUES (%s)",
             rows,
         )
-        self.assertIs(result, cursor.executemany.return_value)
+        self.assertIs(result, cursor)
 
     def test_lock_row_uses_postgresql_for_update(self):
         lock_row(self.db, "SELECT id FROM ticket_types WHERE id = ?", (4,))
