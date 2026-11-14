@@ -27,7 +27,8 @@ class DatabaseConnection:
     def executemany(self, statement, parameters):
         if self.is_postgres:
             statement = statement.replace("?", "%s")
-        return self.connection.executemany(statement, parameters)
+        cursor = self.connection.cursor()
+        return cursor.executemany(statement, parameters)
 
     def commit(self):
         self.connection.commit()

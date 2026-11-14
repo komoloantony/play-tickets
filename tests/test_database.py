@@ -17,6 +17,18 @@ class PostgreSQLAdapterTests(unittest.TestCase):
             ("show", "hall"),
         )
 
+    def test_executemany_uses_a_cursor_and_translates_parameters(self):
+        cursor = self.connection.cursor.return_value
+        rows = [(1,), (2,)]
+
+        result = self.db.executemany("INSERT INTO events (id) VALUES (?)", rows)
+
+        cursor.executemany.assert_called_once_with(
+            "INSERT INTO events (id) VALUES (%s)",
+            rows,
+        )
+        self.assertIs(result, cursor.executemany.return_value)
+
     def test_lock_row_uses_postgresql_for_update(self):
         lock_row(self.db, "SELECT id FROM ticket_types WHERE id = ?", (4,))
 
