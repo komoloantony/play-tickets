@@ -30,6 +30,21 @@ let paymentReference;
 let pollingTimer;
 let pollingInProgress = false;
 
+async function parseJsonResponse(response) {
+  const body = await response.text();
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+    throw new Error(
+      `The ticket API returned HTTP ${response.status} ${response.statusText} instead of JSON. ` +
+      "Set window.PLAY_TICKETS_API_BASE to the deployed Flask API URL."
+    );
+  }
+}
+
 function showPaymentStatus(title, message, reference, shouldScroll = true) {
   paymentResultTitle.textContent = title;
   paymentResultMessage.textContent = message;
@@ -134,7 +149,7 @@ function renderTicketTypes() {
 async function loadEvent() {
   try {
     const response = await fetch(`${API_BASE}/api/v1/events`);
-    const data = await response.json();
+    const data = await parseJsonResponse(response);
     if (!response.ok) {
       throw new Error(data.error || "Ticket sales are unavailable.");
     }
@@ -175,7 +190,7 @@ async function loadEvent() {
 }
 
 async function getJsonResponse(response) {
-  const data = await response.json();
+  const data = await parseJsonResponse(response);
   if (!response.ok) {
     throw new Error(data.error || "The payment request could not be completed.");
   }
@@ -282,7 +297,7 @@ bookingForm.addEventListener("submit", async (event) => {
         })
       }
     );
-    const data = await response.json();
+    const data = await parseJsonResponse(response);
     if (!response.ok && response.status !== 202) {
       throw new Error(data.error || "The payment request could not be started.");
     }
