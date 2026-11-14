@@ -31,7 +31,7 @@ Set-Location partner-frontend
 python -m http.server 8000
 ```
 
-Then open `http://127.0.0.1:8000/` in a browser. The backend allows browser requests from local ports 8000 and 8001 by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create a `Behind the Sins` event and its ticket categories with the admin API before booking it.
+Then open `http://127.0.0.1:8000/` in a browser. Opening `partner-frontend/event.html` directly also shows the event details and ticket prices, but booking requires both local servers and the `http://127.0.0.1:8000/event.html` address. The backend allows browser requests from local ports 8000 and 8001 by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create a `Behind the Sins` event and its ticket categories with the admin API before booking it.
 
 `Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend, then starts an M-Pesa or Airtel Money payment request. It polls the payment-status endpoint until the provider confirms or declines the transaction. Each confirmed reservation receives one unique QR entry ticket per quantity purchased; buyers can display the QR codes and printed codes on the confirmation page. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
 

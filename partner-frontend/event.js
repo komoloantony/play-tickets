@@ -166,10 +166,11 @@ async function loadEvent() {
       ? "All tickets are sold out."
       : "";
   } catch (error) {
-    bookingFeedback.textContent = error.message;
+    bookingFeedback.textContent = window.location.protocol === "file:"
+      ? "Event details and prices are shown above. To load live availability and buy tickets, start the Play Tickets servers and open http://127.0.0.1:8000/event.html."
+      : error.message;
     bookButton.disabled = true;
     submitButton.disabled = true;
-    ticketPrices.textContent = error.message;
   }
 }
 
