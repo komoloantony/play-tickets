@@ -37,7 +37,7 @@ Set `PLAY_TICKETS_ADMIN_TOKEN`, `PLAY_TICKETS_SECRET`, payment credentials, and 
 The repository does not contain `play_tickets.db`, but the local file can be copied to an **empty** PostgreSQL database. The migration script preserves event, ticket-type, reservation, and issued-ticket IDs and refuses to copy into a database that already contains records. Keep the SQLite file as a backup until the destination is verified.
 
 1. Make sure PostgreSQL is available and the `psycopg` dependency is installed.
-2. Set `DATABASE_URL` to the PostgreSQL connection string in a private local shell. Do not commit it.
+2. Set `DATABASE_URL` to Render's **External Database URL** in a private local shell. The Internal URL only works from services on Render's private network. Do not commit or share the connection string.
 3. If the SQLite file is not at the default path, set `PLAY_TICKETS_DATABASE` to its path.
 4. Run `python migrate_sqlite_to_postgres.py` once, then verify the event and reservation counts in PostgreSQL before deploying the web service.
 
