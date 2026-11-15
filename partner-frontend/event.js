@@ -82,7 +82,12 @@ function renderIssuedTickets(tickets, reference) {
     qrContainer.append(qrImage);
     const code = document.createElement("p");
     code.textContent = `Ticket code: ${ticket.ticket_code}`;
-    card.append(heading, eventName, qrContainer, code);
+    const download = document.createElement("a");
+    download.className = "ticket-download";
+    download.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ticket.ticket_svg)}`;
+    download.download = `behind-the-sins-ticket-${ticket.ticket_number}.svg`;
+    download.textContent = "Download printable ticket";
+    card.append(heading, eventName, qrContainer, code, download);
     issuedTickets.append(card);
   }
 }

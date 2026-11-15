@@ -1,6 +1,5 @@
 """JSON backend for Play Tickets; the frontend is a separate client of this API."""
 
-import io
 import os
 import math
 import hmac
@@ -13,8 +12,6 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from flask import Flask, jsonify, request
-import qrcode
-from qrcode.image.svg import SvgPathImage
 from database import (
     close_db,
     expire_pending_reservations,
@@ -25,6 +22,7 @@ from database import (
     remaining_tickets,
 )
 from payments import PaymentError, check_payment, is_configured, start_payment
+from ticket_service import generate_qr_svg, generate_ticket_svg
 
 
 # Keep a ticket on hold for this long while a buyer is paying.
@@ -391,20 +389,6 @@ def api_reserve_tickets(ticket_type_id):
     }), 201
 
 
-def _ticket_qr_svg(ticket_code):
-    qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=8,
-        border=4,
-    )
-    qr.add_data(ticket_code)
-    qr.make(fit=True)
-    image = qr.make_image(image_factory=SvgPathImage)
-    output = io.BytesIO()
-    image.save(output)
-    return output.getvalue().decode("utf-8")
-
-
 def _issue_tickets(db, order_id):
     order = db.execute(
         "SELECT quantity FROM orders WHERE id = ?", (order_id,)
@@ -435,7 +419,8 @@ def _tickets_for_order(db, order_id):
     rows = db.execute(
         "SELECT tickets.ticket_number, tickets.ticket_code, tickets.status, "
         "tickets.issued_at, tickets.checked_in_at, ticket_types.name AS ticket_type, "
-        "events.name AS event_name "
+        "events.name AS event_name, events.starts_at AS event_starts_at, "
+        "events.venue AS event_venue "
         "FROM tickets "
         "JOIN orders ON orders.id = tickets.order_id "
         "JOIN ticket_types ON ticket_types.id = orders.ticket_type_id "
@@ -446,7 +431,15 @@ def _tickets_for_order(db, order_id):
     return [{
         "ticket_number": row["ticket_number"],
         "ticket_code": row["ticket_code"],
-        "qr_svg": _ticket_qr_svg(row["ticket_code"]),
+        "qr_svg": generate_qr_svg(row["ticket_code"]),
+        "ticket_svg": generate_ticket_svg(
+            event_name=row["event_name"],
+            ticket_type=row["ticket_type"],
+            ticket_number=row["ticket_number"],
+            ticket_code=row["ticket_code"],
+            starts_at=row["event_starts_at"],
+            venue=row["event_venue"],
+        ),
         "status": row["status"],
         "issued_at": row["issued_at"],
         "checked_in_at": row["checked_in_at"],

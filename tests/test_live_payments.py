@@ -120,6 +120,11 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(len(status["tickets"]), 2)
         self.assertEqual(len({ticket["ticket_code"] for ticket in status["tickets"]}), 2)
         self.assertIn("<svg", status["tickets"][0]["qr_svg"])
+        ticket = status["tickets"][0]
+        self.assertIn("Behind the Sins", ticket["ticket_svg"])
+        self.assertIn("General admission", ticket["ticket_svg"])
+        self.assertIn(ticket["ticket_code"], ticket["ticket_svg"])
+        self.assertIn("#d8b45a", ticket["ticket_svg"])
 
     def test_paid_tickets_can_be_checked_in_only_once(self):
         with patch.object(app_module, "PAYMENT_MODE", "sandbox"), patch.dict(
