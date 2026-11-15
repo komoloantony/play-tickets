@@ -204,6 +204,42 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(created.get_json()["ticket_type"]["name"], "VIP")
         self.assertEqual(rejected.status_code, 400)
 
+    def test_event_creation_rejects_free_and_fractional_ticket_prices(self):
+        headers = {"Authorization": "Bearer test-admin-token"}
+        event_data = {
+            "name": "Opening Night",
+            "venue": "Nairobi",
+            "starts_at": "2026-12-13T15:00:00",
+            "ticket_type": {
+                "name": "General admission",
+                "price": 1200,
+                "capacity": 10,
+            },
+        }
+        with patch.dict(os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}):
+            created = self.client.post(
+                "/api/v1/events",
+                headers=headers,
+                json=event_data,
+            )
+            for price in (0, 1200.5):
+                invalid_data = {
+                    **event_data,
+                    "ticket_type": {**event_data["ticket_type"], "price": price},
+                }
+                rejected = self.client.post(
+                    "/api/v1/events",
+                    headers=headers,
+                    json=invalid_data,
+                )
+                self.assertEqual(rejected.status_code, 400)
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(
+            created.get_json()["event"]["ticket_types"][0]["price"],
+            1200,
+        )
+
     def test_airtel_status_is_verified_server_to_server(self):
         with patch(
             "app.start_payment",

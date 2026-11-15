@@ -141,15 +141,31 @@ def api_create_event():
         return jsonify({"error": "ticket_type must include name, price, and capacity."}), 400
 
     ticket_name = str(ticket_data.get("name", "")).strip()
-    # Check the event name, ticket price, and ticket limit before saving anything.
+    # Check the event name, whole-KES ticket price, and ticket limit before saving.
     try:
         datetime.fromisoformat(starts_at)
-        price = float(ticket_data["price"])
+        price_decimal = Decimal(str(ticket_data["price"]))
         capacity = int(ticket_data["capacity"])
-        if not name or not venue or not ticket_name or not math.isfinite(price) or price < 0 or capacity < 1:
+        if (
+            not name
+            or not venue
+            or not ticket_name
+            or not price_decimal.is_finite()
+            or price_decimal < 1
+            or price_decimal != price_decimal.to_integral_value()
+            or capacity < 1
+        ):
             raise ValueError
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return jsonify({"error": "Provide an event name, venue, valid ISO date/time, ticket name, non-negative price, and positive capacity."}), 400
+        price = float(price_decimal)
+        if not math.isfinite(price):
+            raise ValueError
+    except (KeyError, InvalidOperation, TypeError, ValueError, OverflowError):
+        return jsonify({
+            "error": (
+                "Provide an event name, venue, valid ISO date/time, ticket name, "
+                "whole-number KES price of at least 1, and positive capacity."
+            )
+        }), 400
 
     # Save the show and its first ticket type together in the database.
     db = get_db()
