@@ -1,0 +1,113 @@
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Arial, sans-serif;
+    background: #101010;
+    color: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+}
+
+.booking-container {
+    width: 100%;
+    max-width: 480px;
+    background: #1c1c1c;
+    padding: 32px;
+    border-radius: 14px;
+    border: 1px solid #383838;
+}
+
+h1 {
+    color: #d6ad55;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #b8b8b8;
+    margin-bottom: 28px;
+}
+
+.event-card {
+    background: #28231a;
+    border: 1px solid #8e6c2e;
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 28px;
+}
+
+.event-label {
+    color: #d6ad55;
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+
+.event-card h2 {
+    margin-bottom: 8px;
+}
+
+.price {
+    color: #d6ad55;
+    font-weight: bold;
+}
+
+label {
+    display: block;
+    margin: 18px 0 8px;
+}
+
+input,
+select {
+    width: 100%;
+    padding: 13px;
+    background: #101010;
+    border: 1px solid #555;
+    border-radius: 7px;
+    color: white;
+    font-size: 15px;
+}
+
+.total {
+    margin-top: 24px;
+    font-size: 18px;
+}
+
+.total strong {
+    color: #d6ad55;
+}
+
+button {
+    width: 100%;
+    padding: 15px;
+    margin-top: 15px;
+    border: none;
+    border-radius: 7px;
+    background: #d6ad55;
+    color: #111;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#result {
+    margin-top: 22px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+    .booking-container {
+        padding: 22px;
+    }
+}

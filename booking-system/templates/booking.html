@@ -1,0 +1,60 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebrand Tickets | Book Your Ticket</title>
+    <link rel="stylesheet" href="/static/booking.css">
+</head>
+<body>
+
+    <main class="booking-container">
+        <h1>Firebrand Tickets</h1>
+        <p class="subtitle">Reserve your place at our event.</p>
+
+        <section class="event-card">
+            <p class="event-label">UPCOMING EVENT</p>
+            <h2>Behind the Sins</h2>
+            <p>General admission</p>
+            <p class="price">KES 200 per ticket</p>
+        </section>
+
+        <form id="bookingForm">
+            <label for="customer_name">Full name</label>
+            <input id="customer_name" name="customer_name"
+                   type="text" required>
+
+            <label for="customer_email">Email address</label>
+            <input id="customer_email" name="customer_email"
+                   type="email" required>
+
+            <label for="quantity">Number of tickets</label>
+            <select id="quantity" name="quantity">
+                <option value="1">1 ticket</option>
+                <option value="2">2 tickets</option>
+                <option value="3">3 tickets</option>
+                <option value="4">4 tickets</option>
+                <option value="5">5 tickets</option>
+                <option value="6">6 tickets</option>
+                <option value="7">7 tickets</option>
+                <option value="8">8 tickets</option>
+                <option value="9">9 tickets</option>
+                <option value="10">10 tickets</option>
+            </select>
+
+            <p class="total">
+                Total: <strong id="totalAmount">KES 200</strong>
+            </p>
+
+            <button type="submit" id="submitButton">
+                Reserve Tickets
+            </button>
+        </form>
+
+        <div id="result" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="/static/booking.js"></script>
+</body>
+</html>
