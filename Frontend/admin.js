@@ -26,14 +26,18 @@ let eventData = [];
 let cameraStream;
 let cameraFrame;
 let scanning = false;
+let isStartingCamera = false;
 
 function setMessage(text, kind = "") {
   message.textContent = text;
   message.className = `admin-message ${kind}`.trim();
 }
 
+
 async function adminRequest(path, options = {}) {
-  const response = await fetch(`${ADMIN_API_BASE}${path}`, {
+  const url = `${ADMIN_API_BASE}${path}`;
+
+  const response = await fetch(url, {
     ...options,
     headers: {
       ...(options.headers || {}),
@@ -41,10 +45,26 @@ async function adminRequest(path, options = {}) {
     },
     cache: "no-store"
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+
+  const responseText = await response.text();
+
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    throw new Error(
+      `API error ${response.status}. URL: ${url}. Response: ${responseText.slice(0, 150)}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed (${response.status}). URL: ${url}`);
+  }
+
   return data;
 }
+
+
 
 function setCheckinMessage(text, kind = "") {
   checkinMessage.textContent = text;
@@ -64,6 +84,7 @@ function stopCameraScanner() {
 }
 
 async function scanWithCamera() {
+  if (isStartingCamera) return;
   if (cameraStream) {
     stopCameraScanner();
     setCheckinMessage("Camera scanning stopped.");
@@ -77,6 +98,7 @@ async function scanWithCamera() {
     return;
   }
 
+  isStartingCamera = true;
   try {
     const formats = await window.BarcodeDetector.getSupportedFormats();
     if (!formats.includes("qr_code")) {
@@ -119,6 +141,8 @@ async function scanWithCamera() {
   } catch (error) {
     stopCameraScanner();
     setCheckinMessage(`Could not start the camera: ${error.message}`, "error");
+  } finally {
+    isStartingCamera = false;
   }
 }
 
