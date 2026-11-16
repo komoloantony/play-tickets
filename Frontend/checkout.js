@@ -5,6 +5,7 @@ const CHECKOUT_API_BASE = window.PLAY_TICKETS_API_BASE ||
     window.location.protocol === "file:"
     ? "http://127.0.0.1:5000"
     : window.location.origin);
+const ORDER_REFERENCE_STORAGE_KEY_PREFIX = "playTickets:frontend";
 
 const checkoutForm = document.getElementById("booking-form");
 const checkoutResults = document.getElementById("ticket-results");
@@ -25,6 +26,40 @@ let paymentPollingTimer;
 let paymentPollingInProgress = false;
 let manualCheckoutEnabled = false;
 let paymentOptions;
+let orderIsTerminal = false;
+
+function orderReferenceStorageKey() {
+  return `${ORDER_REFERENCE_STORAGE_KEY_PREFIX}:${checkoutEvent ? checkoutEvent.id : "unknown"}`;
+}
+
+function rememberOrderReference(reference) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("order", reference);
+  window.history.replaceState({}, "", url);
+  try {
+    window.localStorage.setItem(orderReferenceStorageKey(), reference);
+  } catch (error) {
+    console.warn("Could not save the order reference in this browser.", error);
+  }
+}
+
+function getRememberedOrderReference() {
+  const fromUrl = new URLSearchParams(window.location.search).get("order");
+  let reference = fromUrl;
+  if (!reference) {
+    try {
+      reference = window.localStorage.getItem(orderReferenceStorageKey());
+    } catch (error) {
+      console.warn("Could not read the saved order reference.", error);
+    }
+  }
+  return reference && /^PT-[A-F0-9]{32}$/.test(reference) ? reference : null;
+}
+
+function markOrderTerminal() {
+  orderIsTerminal = true;
+  document.getElementById("book-event").disabled = false;
+}
 
 function showCheckoutResult(title, message, reference) {
   checkoutResults.replaceChildren();
@@ -35,7 +70,7 @@ function showCheckoutResult(title, message, reference) {
   checkoutResults.append(heading, copy);
   if (reference) {
     const referenceLine = document.createElement("p");
-    referenceLine.textContent = `Payment reference: ${reference}`;
+    referenceLine.textContent = `${manualCheckoutEnabled ? "Order" : "Payment"} reference: ${reference}`;
     checkoutResults.append(referenceLine);
   }
   checkoutResults.hidden = false;
@@ -69,7 +104,13 @@ function renderIssuedTickets(tickets, reference) {
     qrContainer.append(qrImage);
     const code = document.createElement("p");
     code.textContent = `Ticket code: ${ticket.ticket_code}`;
-    card.append(heading, eventName, qrContainer, code);
+    const download = document.createElement("a");
+    download.className = "ticket-download";
+    download.href =
+      `${CHECKOUT_API_BASE}/api/v1/payments/${encodeURIComponent(reference)}/tickets/${ticket.ticket_number}.pdf`;
+    download.download = `ticket-${ticket.ticket_number}-${reference.slice(-8)}.pdf`;
+    download.textContent = "Download ticket";
+    card.append(heading, eventName, qrContainer, code, download);
     ticketList.append(card);
   }
   checkoutResults.append(ticketList);
@@ -100,6 +141,16 @@ function startLivePaymentPolling(reservation) {
       const response = await fetch(
         `${CHECKOUT_API_BASE}/api/v1/payments/${encodeURIComponent(reservation.payment_reference)}`
       );
+      if (response.status === 404) {
+        window.clearInterval(paymentPollingTimer);
+        showCheckoutResult(
+          "Order not found",
+          "This order reference is no longer available. Contact the organizer if you have already paid.",
+          reservation.payment_reference
+        );
+        markOrderTerminal();
+        return;
+      }
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not check the payment status.");
 
@@ -111,17 +162,21 @@ function startLivePaymentPolling(reservation) {
           reservation.payment_reference
         );
         window.clearInterval(paymentPollingTimer);
+        markOrderTerminal();
       } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
         reservation.payment_status = data.payment_status;
         reservation.status = data.reservation_status;
         manualPaymentPanel.hidden = true;
         showCheckoutResult(
           "Payment confirmed",
-          "Your payment is confirmed. Show each entry QR code at the door.",
+          data.ticket_email_status === "sent"
+            ? "Your payment is confirmed. Tickets were also sent to your email; show each entry QR code at the door."
+            : "Your payment is confirmed. Tickets are ready below; email delivery is not complete. Show each entry QR code at the door.",
           reservation.payment_reference
         );
         renderIssuedTickets(data.tickets, reservation.payment_reference);
         window.clearInterval(paymentPollingTimer);
+        markOrderTerminal();
       } else if (data.refund_or_support_required) {
         reservation.payment_status = data.payment_status;
         reservation.status = data.reservation_status;
@@ -131,6 +186,7 @@ function startLivePaymentPolling(reservation) {
           reservation.payment_reference
         );
         window.clearInterval(paymentPollingTimer);
+        markOrderTerminal();
       } else if (data.payment_status === "failed") {
         reservation.payment_status = data.payment_status;
         reservation.status = data.reservation_status;
@@ -143,6 +199,7 @@ function startLivePaymentPolling(reservation) {
         manualPaymentPanel.hidden = true;
         pendingReservation = null;
         checkoutForm.querySelector('button[type="submit"]').disabled = false;
+        markOrderTerminal();
       } else if (data.payment_status === "rejected") {
         showCheckoutResult(
           "Payment not approved",
@@ -155,6 +212,7 @@ function startLivePaymentPolling(reservation) {
         manualTransactionCode.disabled = false;
         pendingReservation = null;
         checkoutForm.querySelector('button[type="submit"]').disabled = false;
+        markOrderTerminal();
       } else if (data.reservation_status === "expired") {
         reservation.payment_status = data.payment_status;
         reservation.status = data.reservation_status;
@@ -169,21 +227,43 @@ function startLivePaymentPolling(reservation) {
         manualTransactionCode.disabled = false;
         pendingReservation = null;
         checkoutForm.querySelector('button[type="submit"]').disabled = false;
+        markOrderTerminal();
       } else if (manualCheckoutEnabled) {
+        if (data.payment_status === "pending") {
+          const itemSummary = (data.items || [])
+            .map((item) => `${item.quantity} × ${item.ticket_type}`)
+            .join(" + ");
+          manualPaymentInstructions.textContent =
+            `${itemSummary}. Total: ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. ` +
+            `Pay the exact amount to ${paymentOptions.mpesa.method}, then submit your M-Pesa transaction code.`;
+          mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+          manualPaymentPanel.hidden = false;
+          manualReceiptForm.hidden = false;
+          manualTransactionCode.disabled = false;
+          manualReceiptSubmit.disabled = false;
+        } else {
+          manualPaymentPanel.hidden = true;
+        }
         showCheckoutResult(
           data.payment_status === "submitted"
-            ? "Payment code submitted — awaiting verification"
+            ? "Payment verification in progress"
             : "Order reserved — awaiting payment",
           data.payment_status === "submitted"
-            ? "The organizer is checking your M-Pesa transaction. Keep this page open; tickets appear here after approval."
+            ? `We received your M-Pesa transaction code for ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. Payment verification is pending and tickets have not yet been issued. You can safely leave and return to this page on this device; after approval, tickets will be issued and sent to your email.`
             : "Pay using the Pochi la Biashara number above, then submit your M-Pesa transaction code.",
+          reservation.payment_reference
+        );
+      } else {
+        showCheckoutResult(
+          "Waiting for payment",
+          "Your order is saved. You can safely leave and return to this page to check its status.",
           reservation.payment_reference
         );
       }
     } catch (error) {
       showCheckoutResult(
         "Checking payment",
-        "We could not refresh the payment status. Keep this page open; we’ll try again.",
+        "We could not refresh the payment status. You can leave this page; we’ll check again when you return.",
         reservation.payment_reference
       );
     } finally {
@@ -219,6 +299,9 @@ async function createManualOrder() {
     payment_status: "pending",
     status: "pending"
   };
+  rememberOrderReference(data.order.payment_reference);
+  orderIsTerminal = false;
+  document.getElementById("book-event").disabled = true;
   const itemSummary = data.order.ticket_items
     .map((item) =>
       `${item.quantity} × ${item.ticket_type} (KSh ${Number(item.subtotal).toLocaleString("en-KE")})`
@@ -239,7 +322,7 @@ async function createManualOrder() {
   const expiry = new Date(data.order.expires_at).toLocaleTimeString();
   showCheckoutResult(
     "Order reserved",
-    `Your tickets are held until ${expiry}. Pay the total above and submit your M-Pesa transaction code.`,
+    `Your tickets are held until ${expiry}. Pay the total above and submit your M-Pesa transaction code. Your order is saved if you leave this page.`,
     data.order.payment_reference
   );
 }
@@ -282,7 +365,8 @@ async function submitManualReceipt(event) {
 
     pendingReservation.payment_status = data.payment_status;
     manualTransactionCode.disabled = true;
-    manualReceiptFeedback.textContent = "Payment code submitted. The organizer will verify your payment.";
+    manualReceiptFeedback.textContent =
+      "Payment code submitted. You can safely leave this page while the organizer verifies it.";
     startLivePaymentPolling(pendingReservation);
   } catch (error) {
     manualReceiptFeedback.textContent = error.message;
@@ -306,6 +390,22 @@ async function loadPaymentOptions() {
       "Select your ticket and quantity. Pay the displayed total to the Pochi la Biashara number, then submit your M-Pesa code.";
   }
   checkoutForm.querySelector('button[type="submit"]').disabled = false;
+}
+
+function restoreSavedOrder() {
+  const reference = getRememberedOrderReference();
+  if (!reference) return;
+  pendingReservation = {
+    payment_reference: reference,
+    payment_mode: "manual",
+    payment_status: "pending",
+    status: "pending"
+  };
+  orderIsTerminal = false;
+  checkoutForm.hidden = true;
+  document.getElementById("book-event").disabled = true;
+  showCheckoutResult("Checking your order", "Loading the latest payment status…", reference);
+  startLivePaymentPolling(pendingReservation);
 }
 
 async function submitReservation(event) {
@@ -352,6 +452,9 @@ async function submitReservation(event) {
     if (!response.ok) throw new Error(data.error || "Reservation could not be created.");
 
     pendingReservation = data.reservation;
+    rememberOrderReference(pendingReservation.payment_reference);
+    orderIsTerminal = false;
+    document.getElementById("book-event").disabled = true;
     if (pendingReservation.payment_mode === "live") {
       showCheckoutResult(
         pendingReservation.payment_status === "unknown"
@@ -432,8 +535,10 @@ window.setupPlayTicketsCheckout = function setupPlayTicketsCheckout(event) {
     checkoutListenerAttached = true;
   }
   checkoutForm.querySelector('button[type="submit"]').disabled = true;
-  loadPaymentOptions().catch((error) => {
-    document.getElementById("booking-feedback").textContent = error.message;
-    document.getElementById("book-event").disabled = true;
-  });
+  loadPaymentOptions()
+    .then(restoreSavedOrder)
+    .catch((error) => {
+      document.getElementById("booking-feedback").textContent = error.message;
+      document.getElementById("book-event").disabled = true;
+    });
 };

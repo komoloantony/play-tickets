@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 
@@ -11,7 +12,7 @@ os.environ["PLAY_TICKETS_PAYMENT_MODE"] = "live"
 
 import app as app_module
 import payments
-from database import get_db, inserted_id
+from database import expire_pending_reservations, get_db, inserted_id, remaining_tickets
 
 
 CALLBACK_TOKEN = "a" * 64
@@ -236,7 +237,7 @@ class PaymentFlowTests(unittest.TestCase):
                 "PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token",
                 "PLAY_TICKETS_MPESA_TILL_NUMBER": "0711422001",
             },
-        ):
+        ), patch.object(app_module, "send_ticket_email") as send_ticket_email:
             options = self.client.get("/api/v1/payment-options").get_json()
             created = self.client.post(
                 f"/api/v1/events/{self.event_id}/orders",
@@ -262,6 +263,10 @@ class PaymentFlowTests(unittest.TestCase):
             status = self.client.get(
                 f"/api/v1/payments/{order['payment_reference']}"
             ).get_json()
+            downloaded_ticket = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}/tickets/"
+                f"{status['tickets'][0]['ticket_number']}.pdf"
+            )
             admin_data = self.client.get(
                 f"/api/v1/admin/events/{self.event_id}/reservations",
                 headers={"Authorization": "Bearer test-admin-token"},
@@ -288,7 +293,14 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(order["quantity"], 3)
         self.assertEqual(submitted.status_code, 202)
         self.assertEqual(reviewed.get_json()["reservation_status"], "confirmed")
+        self.assertEqual(reviewed.get_json()["ticket_email_status"], "sent")
+        send_ticket_email.assert_called_once()
         self.assertEqual(status["payment_status"], "succeeded")
+        self.assertEqual(status["ticket_email_status"], "sent")
+        self.assertEqual(downloaded_ticket.status_code, 200)
+        self.assertEqual(downloaded_ticket.mimetype, "application/pdf")
+        self.assertTrue(downloaded_ticket.data.startswith(b"%PDF-"))
+        self.assertIn(".pdf", downloaded_ticket.headers["Content-Disposition"])
         self.assertEqual(len(status["tickets"]), 3)
         self.assertEqual(
             sorted(ticket["ticket_type"] for ticket in status["tickets"]),
@@ -297,6 +309,112 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(
             admin_data["reservations"][0]["manual_transaction_code"], "QJK82ABC91"
         )
+        self.assertEqual(admin_data["reservations"][0]["ticket_email_status"], "sent")
+
+    def test_submitted_manual_order_stays_held_until_review_after_hold_deadline(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
+            os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}
+        ), patch.object(app_module, "send_ticket_email") as send_ticket_email:
+            created = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            order = created.get_json()["order"]
+            submitted = self.client.post(
+                f"/api/v1/payments/{order['payment_reference']}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            old_expiry = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+            with app_module.app.app_context():
+                db = get_db()
+                db.execute(
+                    "UPDATE orders SET expires_at = ? WHERE payment_reference = ?",
+                    (old_expiry, order["payment_reference"]),
+                )
+                expire_pending_reservations(db)
+                db.commit()
+                ticket_type = db.execute(
+                    "SELECT id, capacity FROM ticket_types WHERE id = ?",
+                    (self.ticket_type_id,),
+                ).fetchone()
+                available = remaining_tickets(ticket_type)
+
+            waiting = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}"
+            ).get_json()
+            approved = self.client.post(
+                f"/api/v1/admin/payments/{order['payment_reference']}/review",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"decision": "approve"},
+            )
+            final_status = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}"
+            ).get_json()
+            duplicate_email = self.client.post(
+                f"/api/v1/admin/payments/{order['payment_reference']}/ticket-email",
+                headers={"Authorization": "Bearer test-admin-token"},
+            )
+
+        self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(available, ticket_type["capacity"] - 1)
+        self.assertEqual(waiting["reservation_status"], "pending")
+        self.assertEqual(waiting["payment_status"], "submitted")
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.get_json()["reservation_status"], "confirmed")
+        self.assertEqual(len(final_status["tickets"]), 1)
+        self.assertEqual(final_status["ticket_email_status"], "sent")
+        self.assertEqual(duplicate_email.status_code, 200)
+        send_ticket_email.assert_called_once()
+
+    def test_smtp_failure_does_not_undo_approval_and_can_be_retried(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
+            os.environ,
+            {
+                "PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token",
+                "PLAY_TICKETS_SMTP_HOST": "",
+                "PLAY_TICKETS_SMTP_FROM": "",
+            },
+        ):
+            created = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            reference = created.get_json()["order"]["payment_reference"]
+            self.client.post(
+                f"/api/v1/payments/{reference}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            approved = self.client.post(
+                f"/api/v1/admin/payments/{reference}/review",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"decision": "approve"},
+            )
+            status = self.client.get(f"/api/v1/payments/{reference}").get_json()
+            retry = self.client.post(
+                f"/api/v1/admin/payments/{reference}/ticket-email",
+                headers={"Authorization": "Bearer test-admin-token"},
+            )
+
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(approved.get_json()["reservation_status"], "confirmed")
+        self.assertEqual(approved.get_json()["ticket_email_status"], "failed")
+        self.assertEqual(status["reservation_status"], "confirmed")
+        self.assertEqual(len(status["tickets"]), 1)
+        self.assertEqual(status["ticket_email_status"], "failed")
+        self.assertEqual(retry.status_code, 502)
+        self.assertIn("not configured", retry.get_json()["error"])
 
     def test_manual_payment_options_require_valid_number_and_allow_custom_label(self):
         with patch.object(app_module, "PAYMENT_MODE", "manual"):

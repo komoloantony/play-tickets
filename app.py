@@ -10,8 +10,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+from io import BytesIO
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from database import (
     close_db,
     expire_pending_reservations,
@@ -22,7 +24,8 @@ from database import (
     remaining_tickets,
 )
 from payments import PaymentError, check_payment, is_configured, start_payment
-from ticket_service import generate_qr_svg, generate_ticket_svg
+from ticket_service import generate_qr_svg, generate_ticket_pdf, generate_ticket_svg
+from ticket_email import TicketEmailError, send_ticket_email
 
 
 # Keep a ticket on hold for this long while a buyer is paying.
@@ -710,6 +713,8 @@ def _tickets_for_order(db, order_id):
             starts_at=row["event_starts_at"],
             venue=row["event_venue"],
         ),
+        "event_starts_at": row["event_starts_at"],
+        "event_venue": row["event_venue"],
         "status": row["status"],
         "issued_at": row["issued_at"],
         "checked_in_at": row["checked_in_at"],
@@ -718,14 +723,26 @@ def _tickets_for_order(db, order_id):
     } for row in rows]
 
 
-def _record_provider_result(db, order, succeeded, transaction_id=""):
+def _record_provider_result(
+    db, order, succeeded, transaction_id="", queue_ticket_email=False
+):
     """Apply one provider result without resurrecting an expired reservation."""
     payment_status = "succeeded" if succeeded else "failed"
     reservation_status = order["status"]
     if succeeded:
+        order_keys = order.keys()
+        submitted_manual_payment = (
+            "payment_provider" in order_keys
+            and "payment_status" in order_keys
+            and order["payment_provider"] == "manual_mpesa"
+            and order["payment_status"] == "submitted"
+        )
         reservation_is_active = (
             reservation_status == "pending"
-            and order["expires_at"] > datetime.now(timezone.utc).isoformat()
+            and (
+                submitted_manual_payment
+                or order["expires_at"] > datetime.now(timezone.utc).isoformat()
+            )
         )
         if reservation_is_active:
             reservation_status = "confirmed"
@@ -742,8 +759,128 @@ def _record_provider_result(db, order, succeeded, transaction_id=""):
     )
     if succeeded and reservation_status == "confirmed":
         _issue_tickets(db, order["id"])
+        if queue_ticket_email:
+            db.execute(
+                "INSERT INTO ticket_email_outbox (order_id, status, attempts) "
+                "VALUES (?, 'pending', 0) ON CONFLICT DO NOTHING",
+                (order["id"],),
+            )
     db.commit()
     return payment_status, reservation_status
+
+
+def _ticket_tracking_url(payment_reference):
+    frontend_url = os.environ.get("PLAY_TICKETS_FRONTEND_URL", "").strip()
+    if not frontend_url:
+        return ""
+    parsed = urlsplit(frontend_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["order"] = payment_reference
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
+def _attempt_ticket_email_delivery(db, order_id):
+    """Send a queued order email once, leaving failures available for admin retry."""
+    email_row = lock_row(
+        db,
+        "SELECT status, attempts, last_attempt_at FROM ticket_email_outbox "
+        "WHERE order_id = ?",
+        (order_id,),
+    ).fetchone()
+    if email_row is None:
+        db.rollback()
+        return {"status": "not_queued"}
+    if email_row["status"] == "sent":
+        db.rollback()
+        return {"status": "sent"}
+    if email_row["status"] == "sending" and email_row["last_attempt_at"]:
+        try:
+            last_attempt = datetime.fromisoformat(email_row["last_attempt_at"])
+        except ValueError:
+            last_attempt = datetime.min.replace(tzinfo=timezone.utc)
+        if last_attempt > datetime.now(timezone.utc) - timedelta(minutes=10):
+            db.rollback()
+            return {"status": "sending"}
+
+    attempted_at = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "UPDATE ticket_email_outbox SET status = 'sending', attempts = attempts + 1, "
+        "last_attempt_at = ?, last_error = NULL WHERE order_id = ?",
+        (attempted_at, order_id),
+    )
+    db.commit()
+
+    order = db.execute(
+        "SELECT buyer_name, buyer_email, payment_reference, payment_amount, "
+        "payment_currency FROM orders WHERE id = ?",
+        (order_id,),
+    ).fetchone()
+    tickets = _tickets_for_order(db, order_id)
+    if order is None or not tickets:
+        error_message = "Approved order or issued tickets could not be found."
+        db.execute(
+            "UPDATE ticket_email_outbox SET status = 'failed', last_error = ? "
+            "WHERE order_id = ?",
+            (error_message, order_id),
+        )
+        db.commit()
+        logger.error("Could not send tickets for order %s: %s", order_id, error_message)
+        return {"status": "failed", "error": error_message}
+
+    try:
+        tickets_with_pdfs = [
+            {
+                **ticket,
+                "ticket_pdf": generate_ticket_pdf(
+                    event_name=ticket["event_name"],
+                    ticket_type=ticket["ticket_type"],
+                    buyer_name=ticket["buyer_name"],
+                    ticket_number=ticket["ticket_number"],
+                    ticket_code=ticket["ticket_code"],
+                    starts_at=ticket["event_starts_at"],
+                    venue=ticket["event_venue"],
+                ),
+            }
+            for ticket in tickets
+        ]
+        send_ticket_email(
+            recipient=order["buyer_email"],
+            buyer_name=order["buyer_name"],
+            event_name=tickets[0]["event_name"],
+            payment_reference=order["payment_reference"],
+            payment_amount=order["payment_amount"],
+            payment_currency=order["payment_currency"] or "KES",
+            tickets=tickets_with_pdfs,
+            tracking_url=_ticket_tracking_url(order["payment_reference"]),
+        )
+    except (TicketEmailError, TypeError, ValueError) as error:
+        error_message = (
+            str(error)
+            if isinstance(error, TicketEmailError)
+            else "The ticket email contains invalid order or recipient details."
+        )
+        db.execute(
+            "UPDATE ticket_email_outbox SET status = 'failed', last_error = ? "
+            "WHERE order_id = ?",
+            (error_message, order_id),
+        )
+        db.commit()
+        logger.warning(
+            "Ticket email for order %s was not delivered: %s",
+            order["payment_reference"],
+            error_message,
+        )
+        return {"status": "failed", "error": error_message}
+
+    db.execute(
+        "UPDATE ticket_email_outbox SET status = 'sent', sent_at = ?, last_error = NULL "
+        "WHERE order_id = ?",
+        (datetime.now(timezone.utc).isoformat(), order_id),
+    )
+    db.commit()
+    return {"status": "sent"}
 
 
 @app.get("/api/v1/payments/<payment_reference>")
@@ -751,8 +888,9 @@ def api_payment_status(payment_reference):
     """Return a buyer-safe payment state and refresh Airtel's provider status."""
     db = get_db()
     order = db.execute(
-        "SELECT id, status, expires_at, payment_provider, payment_amount, payment_status, "
-        "provider_checkout_id, provider_transaction_id FROM orders WHERE payment_reference = ?",
+        "SELECT id, status, expires_at, payment_provider, payment_amount, payment_currency, "
+        "payment_status, provider_checkout_id, provider_transaction_id "
+        "FROM orders WHERE payment_reference = ?",
         (payment_reference,),
     ).fetchone()
     if order is None:
@@ -791,6 +929,10 @@ def api_payment_status(payment_reference):
 
     if (
         order["status"] == "pending"
+        and not (
+            order["payment_provider"] == "manual_mpesa"
+            and order["payment_status"] == "submitted"
+        )
         and order["expires_at"] <= datetime.now(timezone.utc).isoformat()
     ):
         expire_pending_reservations(db)
@@ -803,12 +945,27 @@ def api_payment_status(payment_reference):
         if order["payment_status"] == "succeeded" and order["status"] == "confirmed"
         else []
     )
+    items = db.execute(
+        "SELECT ticket_types.name AS ticket_type, order_items.quantity, "
+        "order_items.unit_price, order_items.quantity * order_items.unit_price AS subtotal "
+        "FROM order_items JOIN ticket_types ON ticket_types.id = order_items.ticket_type_id "
+        "WHERE order_items.order_id = ? ORDER BY ticket_types.id",
+        (order["id"],),
+    ).fetchall()
+    email = db.execute(
+        "SELECT status FROM ticket_email_outbox WHERE order_id = ?",
+        (order["id"],),
+    ).fetchone()
     return jsonify({
         "payment_reference": payment_reference,
         "payment_provider": order["payment_provider"],
         "payment_status": order["payment_status"],
         "reservation_status": order["status"],
         "expires_at": order["expires_at"],
+        "payment_amount": order["payment_amount"],
+        "payment_currency": order["payment_currency"] or "KES",
+        "items": [dict(item) for item in items],
+        "ticket_email_status": email["status"] if email else "not_sent",
         "refund_or_support_required": (
             order["payment_status"] == "succeeded"
             and order["status"] != "confirmed"
@@ -816,6 +973,46 @@ def api_payment_status(payment_reference):
         "manual_review_required": order["payment_status"] == "unknown",
         "tickets": tickets,
     })
+
+
+@app.get("/api/v1/payments/<payment_reference>/tickets/<int:ticket_number>.pdf")
+def api_download_ticket_pdf(payment_reference, ticket_number):
+    """Download a single issued ticket as a PDF after its order is approved."""
+    db = get_db()
+    order = db.execute(
+        "SELECT id, status, payment_status FROM orders WHERE payment_reference = ?",
+        (payment_reference,),
+    ).fetchone()
+    if order is None:
+        return jsonify({"error": "Order reference not found."}), 404
+    if order["status"] != "confirmed" or order["payment_status"] != "succeeded":
+        return jsonify({"error": "Tickets are available after payment approval."}), 409
+    ticket = next(
+        (
+            item for item in _tickets_for_order(db, order["id"])
+            if item["ticket_number"] == ticket_number
+        ),
+        None,
+    )
+    if ticket is None:
+        return jsonify({"error": "Ticket not found for this order."}), 404
+    pdf_bytes = generate_ticket_pdf(
+        event_name=ticket["event_name"],
+        ticket_type=ticket["ticket_type"],
+        buyer_name=ticket["buyer_name"],
+        ticket_number=ticket["ticket_number"],
+        ticket_code=ticket["ticket_code"],
+        starts_at=ticket["event_starts_at"],
+        venue=ticket["event_venue"],
+    )
+    response = send_file(
+        BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"ticket-{ticket_number}-{payment_reference[-8:]}.pdf",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.post("/api/v1/admin/tickets/check-in")
@@ -1127,10 +1324,6 @@ def api_admin_review_manual_payment(payment_reference):
     if order["status"] != "pending" or order["payment_status"] != "submitted":
         db.rollback()
         return jsonify({"error": "This order has no reviewable payment submission."}), 409
-    if order["expires_at"] <= datetime.now(timezone.utc).isoformat():
-        db.rollback()
-        return jsonify({"error": "This order has expired; its tickets have been released."}), 409
-
     submission = db.execute(
         "SELECT transaction_code FROM manual_payment_submissions WHERE order_id = ?",
         (order["id"],),
@@ -1141,8 +1334,9 @@ def api_admin_review_manual_payment(payment_reference):
 
     if data["decision"] == "approve":
         payment_status, reservation_status = _record_provider_result(
-            db, order, True, submission["transaction_code"]
+            db, order, True, submission["transaction_code"], queue_ticket_email=True
         )
+        email_result = _attempt_ticket_email_delivery(db, order["id"])
     else:
         db.execute(
             "UPDATE orders SET status = 'rejected', payment_status = 'rejected', "
@@ -1151,12 +1345,41 @@ def api_admin_review_manual_payment(payment_reference):
         )
         db.commit()
         payment_status, reservation_status = "rejected", "rejected"
+        email_result = {"status": "not_sent"}
 
     return jsonify({
         "payment_reference": payment_reference,
         "payment_status": payment_status,
         "reservation_status": reservation_status,
+        "ticket_email_status": email_result["status"],
     })
+
+
+@app.post("/api/v1/admin/payments/<payment_reference>/ticket-email")
+@admin_required
+def api_admin_retry_ticket_email(payment_reference):
+    """Retry delivery of printable tickets for an already-approved order."""
+    db = get_db()
+    order = db.execute(
+        "SELECT id FROM orders WHERE payment_reference = ? "
+        "AND status = 'confirmed' AND payment_status = 'succeeded'",
+        (payment_reference,),
+    ).fetchone()
+    if order is None:
+        return jsonify({"error": "No approved order was found for this reference."}), 404
+    db.execute(
+        "INSERT INTO ticket_email_outbox (order_id, status, attempts) "
+        "VALUES (?, 'pending', 0) ON CONFLICT DO NOTHING",
+        (order["id"],),
+    )
+    db.commit()
+    result = _attempt_ticket_email_delivery(db, order["id"])
+    if result["status"] != "sent":
+        return jsonify({
+            "error": result.get("error", "Ticket email delivery is already in progress."),
+            "ticket_email_status": result["status"],
+        }), 502
+    return jsonify({"ticket_email_status": "sent"})
 
 
 @app.get("/api/v1/admin/events")
@@ -1225,9 +1448,11 @@ def api_admin_reservations(event_id):
         "SELECT o.id, o.buyer_name, o.buyer_email, o.quantity, o.status, o.created_at, o.expires_at, "
         "o.payment_provider, o.payment_phone, o.payment_reference, o.payment_amount, o.payment_currency, o.payment_status, "
         "t.id AS ticket_type_id, t.name AS ticket_type, "
-        "m.transaction_code AS manual_transaction_code "
+        "m.transaction_code AS manual_transaction_code, "
+        "e.status AS ticket_email_status, e.last_error AS ticket_email_error "
         "FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
         "LEFT JOIN manual_payment_submissions m ON m.order_id = o.id "
+        "LEFT JOIN ticket_email_outbox e ON e.order_id = o.id "
         "WHERE t.event_id = ? ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?",
         (event_id, limit, offset),
     ).fetchall()
@@ -1267,6 +1492,8 @@ def api_admin_reservations(event_id):
             "payment_amount": row["payment_amount"],
             "payment_currency": row["payment_currency"],
             "payment_status": row["payment_status"],
+            "ticket_email_status": row["ticket_email_status"] or "not_sent",
+            "ticket_email_error": row["ticket_email_error"],
             "manual_transaction_code": row["manual_transaction_code"],
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],

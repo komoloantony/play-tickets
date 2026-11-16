@@ -34,7 +34,23 @@ Set `PLAY_TICKETS_ADMIN_TOKEN`, `PLAY_TICKETS_SECRET`, payment credentials, and 
 
 ### Manual M-Pesa checkout (default)
 
-The site defaults to manual payment by **Pochi la Biashara: 0711422001**. Buyers choose ticket quantities, see the calculated amount and order reference, pay that exact amount, and submit the M-Pesa transaction code. The backend attaches the code to that order, prevents reuse, and holds its ticket quantities for 15 minutes. An organizer must verify the payment in the admin page and approve it before the backend issues tickets. No Daraja, IntaSend, or M-Pesa sandbox credentials are needed.
+The site defaults to manual payment by **Pochi la Biashara: 0711422001**. Buyers choose ticket quantities, see the calculated amount and order reference, pay that exact amount, and submit the M-Pesa transaction code. The backend attaches the code to that order and prevents reuse. The 15-minute ticket hold applies while the buyer is paying; after a transaction code is submitted, the tickets remain held until the organizer approves or rejects the payment. No Daraja, IntaSend, or M-Pesa sandbox credentials are needed.
+
+The order reference is saved in the page URL and, when browser storage is available, on that device. The buyer can safely leave and return to check the latest status. After approval, the backend issues tickets and attempts to email PDF tickets with their QR codes. Each ticket can also be downloaded individually as a PDF from the order status page. Email delivery uses the persistent database outbox; a failed delivery does not undo ticket issuance, and an admin can retry it from the reservations table.
+
+To enable ticket emails, configure the following environment variables in the backend host. Use a provider-issued SMTP app password where required; never put SMTP credentials in frontend files or commit them to Git:
+
+```text
+PLAY_TICKETS_SMTP_HOST=<SMTP server>
+PLAY_TICKETS_SMTP_PORT=587
+PLAY_TICKETS_SMTP_USERNAME=<SMTP username>
+PLAY_TICKETS_SMTP_PASSWORD=<SMTP password>
+PLAY_TICKETS_SMTP_FROM=<verified sender address>
+PLAY_TICKETS_SMTP_USE_SSL=false
+PLAY_TICKETS_FRONTEND_URL=https://tickets.example.com/event.html
+```
+
+Port 587 uses STARTTLS by default. Set `PLAY_TICKETS_SMTP_USE_SSL=true` for a provider that requires implicit TLS (commonly port 465). `PLAY_TICKETS_FRONTEND_URL` is used to add a return-to-order link to the email. Without SMTP configuration, approval and ticket issuance still work, but the admin page will show the email as failed and offer a retry button.
 
 The number and label can be overridden with environment variables. For a Render deployment, set these in the web service's environment settings so it uses this checkout even if an older payment mode is configured:
 
@@ -52,7 +68,7 @@ $env:PLAY_TICKETS_ADMIN_TOKEN = "use-a-long-private-random-value"
 python app.py
 ```
 
-Keep the admin token private. Enter it on `Frontend/admin.html`; the reservations table shows each ticket type and quantity, total amount, submitted transaction code, and approve/reject controls. Approval is a manual organizer action after checking the payment in M-Pesa.
+Keep the admin token private. Enter it on `Frontend/admin.html`; the reservations table shows each ticket type and quantity, total amount, submitted transaction code, email-delivery status, and approve/reject controls. Approval is a manual organizer action after checking the payment in M-Pesa. If email delivery fails, configure or correct the SMTP settings and use **Retry ticket email** on that reservation.
 
 ### Copy existing SQLite records to PostgreSQL
 
@@ -102,10 +118,12 @@ All API routes use the `/api/v1` prefix and exchange JSON.
 | `POST` | `/api/v1/events/<event_id>/orders` | Create and hold a manual M-Pesa order with one or more ticket types. |
 | `POST` | `/api/v1/payments/<payment_reference>/manual-receipt` | Attach a buyer-submitted M-Pesa code to its order. |
 | `POST` | `/api/v1/admin/payments/<payment_reference>/review` | Approve or reject a submitted M-Pesa code (admin token required). |
+| `POST` | `/api/v1/admin/payments/<payment_reference>/ticket-email` | Retry delivery of tickets for an approved order (admin token required). |
 | `POST` | `/api/v1/events` | Create an event and its first ticket type (admin token required). |
 | `POST` | `/api/v1/events/<event_id>/ticket-types` | Add a ticket category (admin token required). |
 | `POST` | `/api/v1/ticket-types/<ticket_type_id>/reservations` | Hold tickets while the buyer completes payment. |
 | `GET` | `/api/v1/payments/<payment_reference>` | Return a buyer-safe payment and reservation status. |
+| `GET` | `/api/v1/payments/<payment_reference>/tickets/<ticket_number>.pdf` | Download one approved ticket as a PDF. |
 | `POST` | `/api/v1/admin/tickets/check-in` | Validate a confirmed paid ticket and mark it checked in (admin token required). |
 | `POST` | `/api/v1/payments/callbacks/<provider>/<callback_token>` | Receive a token-protected live provider callback over HTTPS. |
 | `POST` | `/api/v1/sandbox/payments/<payment_reference>/result` | Simulate a payment result while sandbox mode is enabled (admin token required). |

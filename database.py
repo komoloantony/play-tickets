@@ -154,6 +154,17 @@ def initialize_database(db):
                 submitted_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS ticket_email_outbox (
+                order_id BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'sending', 'sent', 'failed')),
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                last_attempt_at TEXT,
+                sent_at TEXT,
+                last_error TEXT
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -259,6 +270,19 @@ def initialize_database(db):
             )
             """
         )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ticket_email_outbox (
+                order_id INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'sending', 'sent', 'failed')),
+                attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                last_attempt_at TEXT,
+                sent_at TEXT,
+                last_error TEXT
+            )
+            """
+        )
         ticket_columns = {
             row["name"] for row in db.execute("PRAGMA table_info(tickets)")
         }
@@ -331,7 +355,8 @@ def remaining_tickets(ticket_type):
         "SELECT COALESCE(SUM(i.quantity), 0) AS sold FROM order_items i "
         "JOIN orders o ON o.id = i.order_id "
         "WHERE i.ticket_type_id = ? AND (o.status = 'confirmed' "
-        "OR (o.status = 'pending' AND o.expires_at > ?))",
+        "OR (o.status = 'pending' AND (o.expires_at > ? OR "
+        "(o.payment_provider = 'manual_mpesa' AND o.payment_status = 'submitted'))))",
         (ticket_type["id"], datetime.now(timezone.utc).isoformat()),
     ).fetchone()["sold"]
     return ticket_type["capacity"] - sold
@@ -343,6 +368,7 @@ def expire_pending_reservations(db):
         "UPDATE orders SET status = 'expired', "
         "payment_status = CASE WHEN payment_status IN ('pending', 'processing') "
         "THEN 'expired' ELSE payment_status END "
-        "WHERE status = 'pending' AND expires_at <= ?",
+        "WHERE status = 'pending' AND expires_at <= ? "
+        "AND NOT (payment_provider = 'manual_mpesa' AND payment_status = 'submitted')",
         (datetime.now(timezone.utc).isoformat(),),
     )

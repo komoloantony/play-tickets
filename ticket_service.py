@@ -1,9 +1,13 @@
-"""Generate printable SVG tickets with branded QR codes."""
+"""Generate branded ticket SVGs and downloadable PDF tickets."""
 
+from io import BytesIO
 from datetime import datetime
 from xml.sax.saxutils import escape
 
 import qrcode
+from reportlab.lib.colors import HexColor, white
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
 
 
 BACKGROUND = "#090909"
@@ -128,3 +132,114 @@ def generate_ticket_svg(
 </svg>
 <text x="790" y="352" text-anchor="middle" fill="{GOLD_LIGHT}" font-family="Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1">SCAN AT THE DOOR</text>
 </svg>"""
+
+
+def _pdf_text(value):
+    return str(value or "").encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _draw_fitted_text(pdf, value, x, y, max_width, font, font_size, color):
+    text = _pdf_text(value)
+    size = font_size
+    while size > 7 and stringWidth(text, font, size) > max_width:
+        size -= 1
+    pdf.setFillColor(color)
+    pdf.setFont(font, size)
+    pdf.drawString(x, y, text)
+
+
+def generate_ticket_pdf(
+    *,
+    event_name,
+    ticket_type,
+    buyer_name,
+    ticket_number,
+    ticket_code,
+    starts_at,
+    venue,
+):
+    """Return one branded PDF ticket page with a vector entry QR code."""
+    page_width, page_height = 720, 322
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height), pageCompression=1)
+    pdf.setTitle(
+        _pdf_text(f"{event_name} - {ticket_type} ticket {ticket_number}")
+    )
+    pdf.setFillColor(HexColor(BACKGROUND))
+    pdf.rect(0, 0, page_width, page_height, stroke=0, fill=1)
+    pdf.setFillColor(HexColor(SURFACE))
+    pdf.setStrokeColor(HexColor(GOLD))
+    pdf.setLineWidth(1.5)
+    pdf.roundRect(10, 10, page_width - 20, page_height - 20, 15, stroke=1, fill=1)
+    pdf.setFillColor(HexColor(GOLD))
+    pdf.roundRect(28, 232, 6, 48, 3, stroke=0, fill=1)
+
+    pdf.setFillColor(HexColor(GOLD))
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawString(49, 265, "FIREBRAND TICKETS")
+    _draw_fitted_text(
+        pdf, event_name, 49, 218, 390, "Times-Bold", 29, HexColor(GOLD_LIGHT)
+    )
+    _draw_fitted_text(
+        pdf,
+        f"{ticket_type} - Ticket {ticket_number}",
+        49,
+        190,
+        390,
+        "Helvetica",
+        14,
+        HexColor(MUTED),
+    )
+
+    labels = [
+        ("TICKET HOLDER", buyer_name, 157, 139, "Helvetica", 13, white),
+        ("DATE AND TIME", _format_event_time(starts_at), 101, 83, "Helvetica", 12, white),
+        ("VENUE", venue, 54, 37, "Helvetica", 12, white),
+    ]
+    for label, value, label_y, value_y, font, size, color in labels:
+        pdf.setFillColor(HexColor(GOLD))
+        pdf.setFont("Helvetica-Bold", 8)
+        pdf.drawString(49, label_y, label)
+        _draw_fitted_text(pdf, value, 49, value_y, 385, font, size, color)
+
+    pdf.setFillColor(HexColor(MUTED))
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(49, 20, "TICKET CODE")
+    _draw_fitted_text(
+        pdf, ticket_code, 145, 19, 288, "Courier", 11, white
+    )
+
+    pdf.setStrokeColor(HexColor(GOLD))
+    pdf.setDash(5, 6)
+    pdf.line(482, 30, 482, page_height - 30)
+    pdf.setDash()
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=1,
+        border=4,
+    )
+    qr.add_data(ticket_code)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    qr_box_x, qr_box_y, qr_box_size = 507, 68, 174
+    pdf.setFillColor(white)
+    pdf.roundRect(qr_box_x, qr_box_y, qr_box_size, qr_box_size, 8, stroke=0, fill=1)
+    qr_padding = 12
+    module_size = (qr_box_size - qr_padding * 2) / len(matrix)
+    pdf.setFillColor(HexColor(BACKGROUND))
+    for row_index, modules in enumerate(matrix):
+        for column_index, is_dark in enumerate(modules):
+            if is_dark:
+                pdf.rect(
+                    qr_box_x + qr_padding + column_index * module_size,
+                    qr_box_y + qr_padding + (len(matrix) - row_index - 1) * module_size,
+                    module_size,
+                    module_size,
+                    stroke=0,
+                    fill=1,
+                )
+    pdf.setFillColor(HexColor(GOLD_LIGHT))
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawCentredString(594, 47, "SCAN AT THE DOOR")
+    pdf.save()
+    return buffer.getvalue()

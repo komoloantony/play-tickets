@@ -7,6 +7,7 @@ const API_BASE = window.PLAY_TICKETS_API_BASE ||
     ? "http://127.0.0.1:5000"
     : window.location.origin);
 const PAYMENT_POLL_INTERVAL_MS = 8000;
+const ORDER_REFERENCE_STORAGE_KEY = "playTickets:partner:lastOrderReference";
 
 const bookButton = document.getElementById("book-event");
 const bookingForm = document.getElementById("booking-form");
@@ -45,6 +46,47 @@ let manualCheckoutEnabled = false;
 let paymentReference;
 let pollingTimer;
 let pollingInProgress = false;
+let orderIsTerminal = false;
+
+function rememberOrderReference(reference) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("order", reference);
+  window.history.replaceState({}, "", url);
+  try {
+    window.localStorage.setItem(ORDER_REFERENCE_STORAGE_KEY, reference);
+  } catch (error) {
+    console.warn("Could not save the order reference in this browser.", error);
+  }
+}
+
+function getRememberedOrderReference() {
+  const fromUrl = new URLSearchParams(window.location.search).get("order");
+  let reference = fromUrl;
+  if (!reference) {
+    try {
+      reference = window.localStorage.getItem(ORDER_REFERENCE_STORAGE_KEY);
+    } catch (error) {
+      console.warn("Could not read the saved order reference.", error);
+    }
+  }
+  return reference && /^PT-[A-F0-9]{32}$/.test(reference) ? reference : null;
+}
+
+function clearRememberedOrderReference() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("order");
+  window.history.replaceState({}, "", url);
+  try {
+    window.localStorage.removeItem(ORDER_REFERENCE_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear the saved order reference.", error);
+  }
+}
+
+function markOrderTerminal() {
+  orderIsTerminal = true;
+  bookButton.disabled = false;
+}
 
 async function parseJsonResponse(response) {
   const body = await response.text();
@@ -65,7 +107,7 @@ function showPaymentStatus(title, message, reference, shouldScroll = true) {
   paymentResultTitle.textContent = title;
   paymentResultMessage.textContent = message;
   paymentResultReference.textContent = reference
-    ? `Reservation reference: ${reference}`
+    ? `${manualCheckoutEnabled ? "Order" : "Reservation"} reference: ${reference}`
     : "";
   paymentResults.hidden = false;
   if (shouldScroll) {
@@ -102,9 +144,10 @@ function renderIssuedTickets(tickets, reference) {
     code.textContent = `Ticket code: ${ticket.ticket_code}`;
     const download = document.createElement("a");
     download.className = "ticket-download";
-    download.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ticket.ticket_svg)}`;
-    download.download = `behind-the-sins-ticket-${ticket.ticket_number}.svg`;
-    download.textContent = "Download printable ticket";
+    download.href =
+      `${API_BASE}/api/v1/payments/${encodeURIComponent(reference)}/tickets/${ticket.ticket_number}.pdf`;
+    download.download = `ticket-${ticket.ticket_number}-${reference.slice(-8)}.pdf`;
+    download.textContent = "Download ticket";
     card.append(heading, eventName, buyerName, qrContainer, code, download);
     issuedTickets.append(card);
   }
@@ -269,6 +312,7 @@ async function loadEvent() {
     bookingFeedback.textContent = bookButton.disabled
       ? "All tickets are sold out."
       : "";
+    await restoreSavedOrder();
   } catch (error) {
     bookingFeedback.textContent = window.location.protocol === "file:"
       ? "Event details and prices are shown above. To load live availability and buy tickets, start the Play Tickets servers and open http://127.0.0.1:8000/event.html."
@@ -308,6 +352,9 @@ async function createManualOrder() {
   });
   const data = await getJsonResponse(response);
   paymentReference = data.order.payment_reference;
+  rememberOrderReference(paymentReference);
+  orderIsTerminal = false;
+  bookButton.disabled = true;
   issuedTickets.replaceChildren();
   manualReceiptForm.reset();
   manualTransactionCode.disabled = false;
@@ -373,15 +420,20 @@ async function checkPaymentStatus() {
       );
       window.clearInterval(pollingTimer);
       submitButton.disabled = true;
+      markOrderTerminal();
     } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
+      const emailMessage = data.ticket_email_status === "sent"
+        ? "Your tickets were also sent to your email."
+        : "Your tickets are ready below. Email delivery is not complete; you can download them here.";
       showPaymentStatus(
         "Payment confirmed",
-        "Your payment is confirmed. Show each entry QR code at the door.",
+        `Your payment is confirmed. Show each entry QR code at the door. ${emailMessage}`,
         paymentReference
       );
       renderIssuedTickets(data.tickets, paymentReference);
       window.clearInterval(pollingTimer);
       submitButton.disabled = true;
+      markOrderTerminal();
       if (manualCheckoutEnabled) manualReceiptForm.hidden = true;
     } else if (data.refund_or_support_required) {
       showPaymentStatus(
@@ -391,6 +443,7 @@ async function checkPaymentStatus() {
       );
       window.clearInterval(pollingTimer);
       submitButton.disabled = true;
+      markOrderTerminal();
     } else if (data.payment_status === "failed") {
       showPaymentStatus(
         "Payment not completed",
@@ -400,6 +453,7 @@ async function checkPaymentStatus() {
       window.clearInterval(pollingTimer);
       submitButton.disabled = false;
       paymentReference = null;
+      markOrderTerminal();
     } else if (data.payment_status === "rejected") {
       showPaymentStatus(
         "Payment not approved",
@@ -412,6 +466,7 @@ async function checkPaymentStatus() {
       manualTransactionCode.disabled = false;
       submitButton.disabled = false;
       paymentReference = null;
+      markOrderTerminal();
     } else if (data.reservation_status === "expired") {
       showPaymentStatus(
         "Reservation expired",
@@ -424,13 +479,27 @@ async function checkPaymentStatus() {
       manualTransactionCode.disabled = false;
       submitButton.disabled = false;
       paymentReference = null;
+      markOrderTerminal();
     } else if (manualCheckoutEnabled) {
+      if (data.payment_status === "pending") {
+        const itemSummary = (data.items || [])
+          .map((item) => `${item.quantity} × ${item.ticket_type}`)
+          .join(" + ");
+        manualPaymentInstructions.textContent =
+          `${itemSummary}. Total: ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. ` +
+          `Pay the exact amount to ${paymentOptions.mpesa.method}, then submit your M-Pesa transaction code.`;
+        mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+        manualPaymentPanel.hidden = false;
+        manualReceiptForm.hidden = false;
+        manualTransactionCode.disabled = false;
+        manualReceiptSubmit.disabled = false;
+      }
       showPaymentStatus(
         data.payment_status === "submitted"
-          ? "Payment code submitted — awaiting verification"
+          ? "Payment verification in progress"
           : "Order reserved — awaiting payment",
         data.payment_status === "submitted"
-          ? "The organizer is checking your M-Pesa transaction. Keep this page open; tickets appear here after approval."
+          ? `We received your M-Pesa transaction code for ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. Payment verification is pending and tickets have not yet been issued. You can safely leave and return to this page on this device; after approval, tickets will be issued and sent to your email.`
           : "Pay using the Pochi la Biashara number above, then submit your M-Pesa transaction code.",
         paymentReference,
         false
@@ -444,6 +513,17 @@ async function checkPaymentStatus() {
       );
     }
   } catch (error) {
+    if (error.message === "Payment reference not found.") {
+      window.clearInterval(pollingTimer);
+      showPaymentStatus(
+        "Order not found",
+        "This order reference is no longer available. Contact the organizer if you have already paid.",
+        paymentReference
+      );
+      markOrderTerminal();
+      bookButton.disabled = false;
+      return;
+    }
     showPaymentStatus(
       "Checking payment",
       "We could not refresh the payment status. We’ll keep trying; do not submit another payment yet.",
@@ -455,7 +535,28 @@ async function checkPaymentStatus() {
   }
 }
 
+async function restoreSavedOrder() {
+  const reference = getRememberedOrderReference();
+  if (!reference) return;
+  paymentReference = reference;
+  orderIsTerminal = false;
+  bookButton.disabled = true;
+  bookingForm.hidden = true;
+  showPaymentStatus("Checking your order", "Loading the latest payment status…", reference, false);
+  pollingTimer = window.setInterval(checkPaymentStatus, PAYMENT_POLL_INTERVAL_MS);
+  await checkPaymentStatus();
+}
+
 bookButton.addEventListener("click", () => {
+  if (orderIsTerminal) {
+    window.clearInterval(pollingTimer);
+    paymentReference = null;
+    orderIsTerminal = false;
+    clearRememberedOrderReference();
+    issuedTickets.replaceChildren();
+    paymentResults.hidden = true;
+    bookButton.disabled = false;
+  }
   bookingForm.hidden = false;
   bookingForm.scrollIntoView({ behavior: "smooth", block: "center" });
   bookingFeedback.textContent = "";
@@ -503,6 +604,9 @@ bookingForm.addEventListener("submit", async (event) => {
     }
 
     paymentReference = data.reservation.payment_reference;
+    rememberOrderReference(paymentReference);
+    orderIsTerminal = false;
+    bookButton.disabled = true;
     issuedTickets.replaceChildren();
     paymentFeedback.textContent = data.message;
     showPaymentStatus(
@@ -541,7 +645,7 @@ manualReceiptForm.addEventListener("submit", async (event) => {
     );
     const data = await getJsonResponse(response);
     manualReceiptFeedback.textContent =
-      `Code received for ${data.payment_reference}. Waiting for organizer verification.`;
+      `Code received for ${data.payment_reference}. You can safely leave this page while the organizer verifies it.`;
     manualTransactionCode.disabled = true;
     await checkPaymentStatus();
   } catch (error) {

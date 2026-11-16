@@ -214,6 +214,14 @@ async function loadReservations() {
     badge.className = `status-pill ${reservation.status}`;
     badge.textContent = reservation.status;
     status.append(badge);
+    if (reservation.status === "confirmed") {
+      const emailStatus = document.createElement("small");
+      emailStatus.textContent = `Ticket email: ${reservation.ticket_email_status}`;
+      if (reservation.ticket_email_error) {
+        emailStatus.title = reservation.ticket_email_error;
+      }
+      status.append(emailStatus);
+    }
     const receipt = document.createElement("td");
     if (reservation.manual_transaction_code) {
       receipt.textContent = reservation.manual_transaction_code;
@@ -237,6 +245,18 @@ async function loadReservations() {
       }
       receipt.append(actions);
     }
+    if (
+      reservation.status === "confirmed" &&
+      reservation.ticket_email_status !== "sent" &&
+      reservation.ticket_email_status !== "sending"
+    ) {
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.className = "payment-review-button";
+      retryButton.textContent = "Retry ticket email";
+      retryButton.addEventListener("click", () => retryTicketEmail(reservation));
+      receipt.append(retryButton);
+    }
     const created = document.createElement("td");
     created.textContent = formatDate(reservation.created_at);
     row.append(buyer, ticket, payment, amount, status, receipt, created);
@@ -253,7 +273,7 @@ async function reviewManualPayment(reservation, decision) {
     return;
   }
   try {
-    await adminRequest(
+    const result = await adminRequest(
       `/api/v1/admin/payments/${encodeURIComponent(reservation.payment_reference)}/review`,
       {
         method: "POST",
@@ -263,13 +283,29 @@ async function reviewManualPayment(reservation, decision) {
     );
     setMessage(
       decision === "approve"
-        ? "Payment approved and tickets issued."
+        ? result.ticket_email_status === "sent"
+          ? "Payment approved, tickets issued, and ticket email sent."
+          : "Payment approved and tickets issued, but the ticket email was not sent. Retry it from the reservation row."
         : "Payment rejected and ticket hold released.",
       "success"
     );
     await loadDashboard();
   } catch (error) {
     setMessage(error.message, "error");
+  }
+}
+
+async function retryTicketEmail(reservation) {
+  try {
+    await adminRequest(
+      `/api/v1/admin/payments/${encodeURIComponent(reservation.payment_reference)}/ticket-email`,
+      { method: "POST" }
+    );
+    setMessage("Ticket email sent successfully.", "success");
+    await loadDashboard();
+  } catch (error) {
+    setMessage(error.message, "error");
+    await loadDashboard();
   }
 }
 
