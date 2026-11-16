@@ -204,7 +204,9 @@ async function loadReservations() {
     const ticket = document.createElement("td");
     ticket.textContent = `${reservation.quantity} × ${reservation.ticket_type}`;
     const payment = document.createElement("td");
-    payment.textContent = `${reservation.payment_provider || "—"} · ${reservation.payment_phone || "—"}`;
+    payment.textContent = reservation.payment_provider === "manual_mpesa"
+      ? "M-Pesa · Pochi la Biashara"
+      : `${reservation.payment_provider || "—"} · ${reservation.payment_phone || "—"}`;
     const amount = document.createElement("td");
     amount.textContent = `${reservation.payment_currency || "KES"} ${Number(reservation.payment_amount || 0).toLocaleString()}`;
     const status = document.createElement("td");
@@ -212,12 +214,63 @@ async function loadReservations() {
     badge.className = `status-pill ${reservation.status}`;
     badge.textContent = reservation.status;
     status.append(badge);
+    const receipt = document.createElement("td");
+    if (reservation.manual_transaction_code) {
+      receipt.textContent = reservation.manual_transaction_code;
+    } else {
+      receipt.textContent = "—";
+    }
+    if (
+      reservation.payment_provider === "manual_mpesa" &&
+      reservation.status === "pending" &&
+      reservation.payment_status === "submitted"
+    ) {
+      const actions = document.createElement("div");
+      actions.className = "payment-review-actions";
+      for (const decision of ["approve", "reject"]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `payment-review-button ${decision}`;
+        button.textContent = decision === "approve" ? "Approve" : "Reject";
+        button.addEventListener("click", () => reviewManualPayment(reservation, decision));
+        actions.append(button);
+      }
+      receipt.append(actions);
+    }
     const created = document.createElement("td");
     created.textContent = formatDate(reservation.created_at);
-    row.append(buyer, ticket, payment, amount, status, created);
+    row.append(buyer, ticket, payment, amount, status, receipt, created);
     rows.append(row);
   });
   reservationCount.textContent = `${data.reservations.length} of ${data.pagination.total} reservations · Showing the most recent 100`;
+}
+
+async function reviewManualPayment(reservation, decision) {
+  if (
+    decision === "reject" &&
+    !window.confirm("Reject this payment and release the held tickets?")
+  ) {
+    return;
+  }
+  try {
+    await adminRequest(
+      `/api/v1/admin/payments/${encodeURIComponent(reservation.payment_reference)}/review`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision })
+      }
+    );
+    setMessage(
+      decision === "approve"
+        ? "Payment approved and tickets issued."
+        : "Payment rejected and ticket hold released.",
+      "success"
+    );
+    await loadDashboard();
+  } catch (error) {
+    setMessage(error.message, "error");
+  }
 }
 
 async function loadDashboard() {

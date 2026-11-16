@@ -68,7 +68,7 @@
         </div>
 
         <p class="event-detail-note">
-          Free popcorn. Your booking is confirmed only after the payment provider verifies payment.
+          Free popcorn. Your booking is confirmed only after your payment has been verified.
         </p>
 
         
@@ -80,7 +80,7 @@
 
 <form class="booking-form" id="booking-form" hidden>
   <h3>Pay for your tickets</h3>
-  <p>We’ll send a payment request to your phone. Approve it to confirm your booking.</p>
+  <p id="checkout-instructions">Choose your tickets and complete payment to confirm your booking.</p>
 
   <label for="buyer-name">Your full name</label>
   <input
@@ -102,34 +102,42 @@
     required
   >
 
-  <label for="ticket-type">Ticket type</label>
-  <select id="ticket-type" name="ticket_type" required disabled>
-    <option value="">Loading ticket types…</option>
-  </select>
+  <div id="provider-payment-fields">
+    <label for="ticket-type">Ticket type</label>
+    <select id="ticket-type" name="ticket_type" required disabled>
+      <option value="">Loading ticket types…</option>
+    </select>
 
-  <label for="ticket-quantity">Number of tickets</label>
-  <select id="ticket-quantity" name="quantity" required disabled>
-    <option value="1">1 ticket</option>
-  </select>
+    <label for="ticket-quantity">Number of tickets</label>
+    <select id="ticket-quantity" name="quantity" required disabled>
+      <option value="1">1 ticket</option>
+    </select>
 
-  <label for="payment-provider">Payment method</label>
-  <select id="payment-provider" name="payment_provider" required>
-    <option value="mpesa">M-Pesa</option>
-    <option value="airtel">Airtel Money</option>
-  </select>
+    <label for="payment-provider">Payment method</label>
+    <select id="payment-provider" name="payment_provider" required>
+      <option value="mpesa">M-Pesa</option>
+      <option value="airtel">Airtel Money</option>
+    </select>
 
-  <label for="payment-phone">Kenyan mobile number</label>
-  <input
-    id="payment-phone"
-    name="payment_phone"
-    type="tel"
-    inputmode="tel"
-    autocomplete="tel"
-    placeholder="e.g. 0712345678"
-    pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
-    maxlength="13"
-    required
-  >
+    <label for="payment-phone">Kenyan mobile number</label>
+    <input
+      id="payment-phone"
+      name="payment_phone"
+      type="tel"
+      inputmode="tel"
+      autocomplete="tel"
+      placeholder="e.g. 0712345678"
+      pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
+      maxlength="13"
+      required
+    >
+  </div>
+
+  <fieldset id="manual-payment-fields" hidden>
+    <legend>Select tickets</legend>
+    <div id="manual-ticket-quantities"></div>
+    <p id="manual-order-total" aria-live="polite"></p>
+  </fieldset>
 
   <button class="primary-button" type="submit" disabled>
     Continue to payment
@@ -137,6 +145,42 @@
 
   <p id="payment-feedback" class="booking-feedback" role="status"></p>
 </form>
+
+<section class="manual-payment-panel" id="manual-payment-panel" hidden>
+  <h3>Pay with M-Pesa</h3>
+  <p id="manual-payment-instructions"></p>
+  <div class="payment-number-card">
+    <div>
+      <span class="payment-number-label">Pochi la Biashara</span>
+      <strong class="payment-number-value" id="mpesa-payment-number"></strong>
+    </div>
+    <button class="copy-payment-number" id="copy-payment-number" type="button">
+      Copy number
+    </button>
+    <p class="copy-payment-feedback" id="copy-payment-feedback" role="status" aria-live="polite"></p>
+  </div>
+  <p id="manual-order-expiry"></p>
+  <form id="manual-receipt-form">
+    <label for="manual-transaction-code">M-Pesa transaction code</label>
+    <input
+      id="manual-transaction-code"
+      name="transaction_code"
+      type="text"
+      inputmode="text"
+      autocomplete="off"
+      autocapitalize="characters"
+      minlength="6"
+      maxlength="20"
+      pattern="[A-Za-z0-9]{6,20}"
+      placeholder="e.g. QJK82ABC91"
+      required
+    >
+    <button class="primary-button" id="submit-manual-receipt" type="submit">
+      Submit payment code
+    </button>
+    <p id="manual-receipt-feedback" class="booking-feedback" role="status"></p>
+  </form>
+</section>
 
       </div>
     </section>

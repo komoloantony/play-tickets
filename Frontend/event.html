@@ -52,7 +52,7 @@
         </div>
 
         <p class="event-detail-note">
-          Your reservation is confirmed only after the payment provider verifies payment.
+          Your reservation is confirmed after the organizer verifies your M-Pesa payment.
         </p>
 
         <button class="primary-button book-event-button" id="book-event" type="button" disabled>
@@ -62,7 +62,7 @@
 
         <form class="booking-form" id="booking-form" hidden>
           <h3>Pay for your tickets</h3>
-          <p>Approve the payment request on your phone to confirm your reservation.</p>
+          <p id="checkout-instructions">Choose your ticket and quantity. Pay by M-Pesa and submit your transaction code.</p>
 
           <label for="buyer-name">Your full name</label>
           <input id="buyer-name" name="buyer_name" type="text" autocomplete="name" required>
@@ -80,28 +80,65 @@
             <option value="1">1 ticket</option>
           </select>
 
-          <label for="payment-provider">Payment method</label>
-          <select id="payment-provider" name="payment_provider" required>
-            <option value="mpesa">M-Pesa</option>
-            <option value="airtel">Airtel Money</option>
-          </select>
+          <div id="provider-payment-fields">
+            <label for="payment-provider">Payment method</label>
+            <select id="payment-provider" name="payment_provider" required>
+              <option value="mpesa">M-Pesa</option>
+              <option value="airtel">Airtel Money</option>
+            </select>
 
-          <label for="payment-phone">Kenyan mobile number</label>
-          <input
-            id="payment-phone"
-            name="payment_phone"
-            type="tel"
-            inputmode="tel"
-            autocomplete="tel"
-            placeholder="e.g. 0712345678"
-            pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
-            maxlength="13"
-            required
-          >
+            <label for="payment-phone">Kenyan mobile number</label>
+            <input
+              id="payment-phone"
+              name="payment_phone"
+              type="tel"
+              inputmode="tel"
+              autocomplete="tel"
+              placeholder="e.g. 0712345678"
+              pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
+              maxlength="13"
+              required
+            >
+          </div>
 
           <button class="primary-button" type="submit" disabled>Continue to payment</button>
           <p id="payment-feedback" class="booking-feedback" role="status"></p>
         </form>
+
+        <section class="booking-form manual-payment-panel" id="manual-payment-panel" hidden>
+          <h3>Pay with M-Pesa</h3>
+          <p id="manual-payment-instructions"></p>
+          <div class="payment-number-card">
+            <div>
+              <span class="payment-number-label">Pochi la Biashara</span>
+              <strong class="payment-number-value" id="mpesa-payment-number"></strong>
+            </div>
+            <button class="copy-payment-number" id="copy-payment-number" type="button">
+              Copy number
+            </button>
+            <p class="copy-payment-feedback" id="copy-payment-feedback" role="status" aria-live="polite"></p>
+          </div>
+          <form id="manual-receipt-form">
+            <label for="manual-transaction-code">M-Pesa transaction code</label>
+            <input
+              id="manual-transaction-code"
+              name="transaction_code"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              autocapitalize="characters"
+              minlength="6"
+              maxlength="20"
+              pattern="[A-Za-z0-9]{6,20}"
+              placeholder="e.g. QJK82ABC91"
+              required
+            >
+            <button class="primary-button" id="submit-manual-receipt" type="submit">
+              Submit payment code
+            </button>
+            <p id="manual-receipt-feedback" class="booking-feedback" role="status"></p>
+          </form>
+        </section>
       </div>
     </section>
 

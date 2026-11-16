@@ -121,8 +121,11 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(len({ticket["ticket_code"] for ticket in status["tickets"]}), 2)
         self.assertIn("<svg", status["tickets"][0]["qr_svg"])
         ticket = status["tickets"][0]
+        self.assertEqual(ticket["buyer_name"], "Amina")
+        self.assertNotIn("buyer_email", ticket)
         self.assertIn("Behind the Sins", ticket["ticket_svg"])
         self.assertIn("General admission", ticket["ticket_svg"])
+        self.assertIn("Amina", ticket["ticket_svg"])
         self.assertIn(ticket["ticket_code"], ticket["ticket_svg"])
         self.assertIn("#d8b45a", ticket["ticket_svg"])
 
@@ -215,6 +218,214 @@ class PaymentFlowTests(unittest.TestCase):
         data = response.get_json()
         self.assertEqual(data["reservations"], [])
         self.assertEqual(data["pagination"]["total"], 0)
+
+    def test_manual_mpesa_order_accepts_multiple_ticket_types_and_issues_each_type(self):
+        with app_module.app.app_context():
+            db = get_db()
+            vip_cursor = db.execute(
+                "INSERT INTO ticket_types (event_id, name, price, capacity) "
+                "VALUES (?, 'VIP', 500, 5) RETURNING id",
+                (self.event_id,),
+            )
+            vip_ticket_type_id = inserted_id(vip_cursor)
+            db.commit()
+
+        with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
+            os.environ,
+            {
+                "PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token",
+                "PLAY_TICKETS_MPESA_TILL_NUMBER": "0711422001",
+            },
+        ):
+            options = self.client.get("/api/v1/payment-options").get_json()
+            created = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 2},
+                        {"ticket_type_id": vip_ticket_type_id, "quantity": 1},
+                    ],
+                },
+            )
+            order = created.get_json()["order"]
+            submitted = self.client.post(
+                f"/api/v1/payments/{order['payment_reference']}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            reviewed = self.client.post(
+                f"/api/v1/admin/payments/{order['payment_reference']}/review",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"decision": "approve"},
+            )
+            status = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}"
+            ).get_json()
+            admin_data = self.client.get(
+                f"/api/v1/admin/events/{self.event_id}/reservations",
+                headers={"Authorization": "Bearer test-admin-token"},
+            ).get_json()
+
+        self.assertEqual(options["payment_options"]["mpesa"]["till_number"], "0711422001")
+        self.assertEqual(
+            options["payment_options"]["mpesa"]["method"], "Pochi la Biashara"
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(order["payment_amount"], 900)
+        self.assertEqual(
+            order["ticket_items"],
+            [
+                {
+                    "ticket_type": "General admission",
+                    "quantity": 2,
+                    "unit_price": 200,
+                    "subtotal": 400,
+                },
+                {"ticket_type": "VIP", "quantity": 1, "unit_price": 500, "subtotal": 500},
+            ],
+        )
+        self.assertEqual(order["quantity"], 3)
+        self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(reviewed.get_json()["reservation_status"], "confirmed")
+        self.assertEqual(status["payment_status"], "succeeded")
+        self.assertEqual(len(status["tickets"]), 3)
+        self.assertEqual(
+            sorted(ticket["ticket_type"] for ticket in status["tickets"]),
+            ["General admission", "General admission", "VIP"],
+        )
+        self.assertEqual(
+            admin_data["reservations"][0]["manual_transaction_code"], "QJK82ABC91"
+        )
+
+    def test_manual_payment_options_require_valid_number_and_allow_custom_label(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"):
+            with patch.dict(os.environ, {}, clear=True):
+                defaults = self.client.get("/api/v1/payment-options")
+            self.assertEqual(defaults.status_code, 200)
+            self.assertEqual(
+                defaults.get_json()["payment_options"]["mpesa"],
+                {"method": "Pochi la Biashara", "till_number": "0711422001"},
+            )
+
+            with patch.dict(os.environ, {"PLAY_TICKETS_MPESA_TILL_NUMBER": ""}):
+                missing = self.client.get("/api/v1/payment-options")
+            self.assertEqual(missing.status_code, 503)
+
+            with patch.dict(os.environ, {
+                "PLAY_TICKETS_MPESA_TILL_NUMBER": "12345",
+                "PLAY_TICKETS_MPESA_METHOD_LABEL": "M-Pesa Till",
+            }):
+                configured = self.client.get("/api/v1/payment-options")
+            self.assertEqual(configured.status_code, 200)
+            self.assertEqual(
+                configured.get_json()["payment_options"]["mpesa"],
+                {"method": "M-Pesa Till", "till_number": "12345"},
+            )
+
+            with patch.dict(os.environ, {"PLAY_TICKETS_MPESA_TILL_NUMBER": "1234"}):
+                invalid = self.client.get("/api/v1/payment-options")
+            self.assertEqual(invalid.status_code, 503)
+
+    def test_manual_receipt_code_cannot_be_reused_for_another_order(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"):
+            created = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            reference = created.get_json()["order"]["payment_reference"]
+            first = self.client.post(
+                f"/api/v1/payments/{reference}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            second = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            duplicate = self.client.post(
+                f"/api/v1/payments/{second.get_json()['order']['payment_reference']}/manual-receipt",
+                json={"transaction_code": "qjk82abc91"},
+            )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn("already submitted", duplicate.get_json()["error"])
+
+    def test_rejecting_manual_payment_releases_held_tickets(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
+            os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}
+        ):
+            created = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 2}
+                    ],
+                },
+            )
+            order = created.get_json()["order"]
+            self.client.post(
+                f"/api/v1/payments/{order['payment_reference']}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            rejected = self.client.post(
+                f"/api/v1/admin/payments/{order['payment_reference']}/review",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"decision": "reject"},
+            )
+            status = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}"
+            ).get_json()
+            available = self.client.get(
+                f"/api/v1/events/{self.event_id}"
+            ).get_json()["event"]["ticket_types"][0]["available"]
+
+        self.assertEqual(rejected.status_code, 200)
+        self.assertEqual(status["reservation_status"], "rejected")
+        self.assertEqual(status["tickets"], [])
+        self.assertEqual(available, 20)
+
+    def test_manual_order_rejects_duplicate_ticket_types_and_over_limit(self):
+        with patch.object(app_module, "PAYMENT_MODE", "manual"):
+            duplicate_categories = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1},
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1},
+                    ],
+                },
+            )
+            too_many = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 10},
+                        {"ticket_type_id": self.ticket_type_id + 1, "quantity": 1},
+                    ],
+                },
+            )
+
+        self.assertEqual(duplicate_categories.status_code, 400)
+        self.assertEqual(too_many.status_code, 400)
 
     def test_event_creation_rejects_free_and_fractional_ticket_prices(self):
         headers = {"Authorization": "Bearer test-admin-token"}

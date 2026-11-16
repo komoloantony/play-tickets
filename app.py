@@ -27,7 +27,7 @@ from ticket_service import generate_qr_svg, generate_ticket_svg
 
 # Keep a ticket on hold for this long while a buyer is paying.
 RESERVATION_HOLD_MINUTES = 15
-PAYMENT_MODE = os.environ.get("PLAY_TICKETS_PAYMENT_MODE", "disabled").lower()
+PAYMENT_MODE = os.environ.get("PLAY_TICKETS_PAYMENT_MODE", "manual").lower()
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("PLAY_TICKETS_SECRET", "local-development-key")
 logger = logging.getLogger(__name__)
@@ -240,6 +240,238 @@ def api_get_event(event_id):
     return jsonify({"event": event_json(event)})
 
 
+@app.get("/api/v1/payment-options")
+def api_payment_options():
+    """Expose the selected checkout mode and public M-Pesa payment instructions."""
+    options = {"mode": PAYMENT_MODE}
+    if PAYMENT_MODE == "manual":
+        till_number = os.environ.get(
+            "PLAY_TICKETS_MPESA_TILL_NUMBER", "0711422001"
+        ).strip()
+        # A Till/Paybill is 5-7 digits; a Pochi la Biashara number is a 10-digit phone number.
+        if not re.fullmatch(r"\d{5,10}", till_number):
+            return jsonify({
+                "error": "Set PLAY_TICKETS_MPESA_TILL_NUMBER to a valid M-Pesa number (5-10 digits)."
+            }), 503
+        options["mpesa"] = {
+            "method": os.environ.get(
+                "PLAY_TICKETS_MPESA_METHOD_LABEL", "Pochi la Biashara"
+            ).strip() or "Pochi la Biashara",
+            "till_number": till_number,
+        }
+    return jsonify({"payment_options": options})
+
+
+@app.post("/api/v1/events/<int:event_id>/orders")
+def api_create_manual_order(event_id):
+    """Create one manual-M-Pesa order that can contain multiple ticket types."""
+    if PAYMENT_MODE != "manual":
+        return jsonify({"error": "Manual M-Pesa checkout is not enabled."}), 404
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    buyer_name = str(data.get("buyer_name", "")).strip()
+    buyer_email = str(data.get("buyer_email", "")).strip()
+    raw_items = data.get("ticket_items")
+    if not buyer_name or "@" not in buyer_email or not isinstance(raw_items, list):
+        return jsonify({
+            "error": "Provide a buyer name, valid email, and ticket_items list."
+        }), 400
+    if not 1 <= len(raw_items) <= 10:
+        return jsonify({"error": "Choose between 1 and 10 ticket categories."}), 400
+
+    requested = []
+    seen_ticket_types = set()
+    total_quantity = 0
+    for item in raw_items:
+        if not isinstance(item, dict):
+            return jsonify({"error": "Each ticket item must be an object."}), 400
+        try:
+            ticket_type_id = int(item["ticket_type_id"])
+            quantity = int(item["quantity"])
+            if (
+                isinstance(item["ticket_type_id"], bool)
+                or isinstance(item["quantity"], bool)
+                or ticket_type_id < 1
+                or not 1 <= quantity <= 10
+                or ticket_type_id in seen_ticket_types
+            ):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return jsonify({
+                "error": "Each ticket type must be unique and have a quantity from 1 to 10."
+            }), 400
+        seen_ticket_types.add(ticket_type_id)
+        total_quantity += quantity
+        requested.append((ticket_type_id, quantity))
+    if total_quantity > 10:
+        return jsonify({"error": "An order can contain at most 10 tickets."}), 400
+
+    db = get_db()
+    placeholders = ", ".join("?" for _ in requested)
+    ticket_types = db.execute(
+        "SELECT t.*, e.id AS event_id, e.name AS event_name "
+        "FROM ticket_types t JOIN events e ON e.id = t.event_id "
+        f"WHERE e.id = ? AND t.id IN ({placeholders}) ORDER BY t.id",
+        (event_id, *(ticket_type_id for ticket_type_id, _ in requested)),
+    ).fetchall()
+    if len(ticket_types) != len(requested):
+        return jsonify({"error": "One or more ticket types were not found for this event."}), 404
+
+    types_by_id = {ticket_type["id"]: ticket_type for ticket_type in ticket_types}
+    priced_items = []
+    total_amount = 0
+    for ticket_type_id, quantity in requested:
+        ticket_type = types_by_id[ticket_type_id]
+        try:
+            unit_price = Decimal(str(ticket_type["price"]))
+            if unit_price < 1 or unit_price != unit_price.to_integral_value():
+                raise InvalidOperation
+        except (InvalidOperation, TypeError, ValueError):
+            return jsonify({"error": "Ticket prices must be whole-number KES amounts."}), 400
+        unit_price = int(unit_price)
+        total_amount += unit_price * quantity
+        priced_items.append((ticket_type, quantity, unit_price))
+
+    expire_pending_reservations(db)
+    db.commit()
+    lock_placeholders = ", ".join("?" for _ in ticket_types)
+    locked_types = lock_row(
+        db,
+        f"SELECT id FROM ticket_types WHERE id IN ({lock_placeholders}) ORDER BY id",
+        tuple(ticket_type["id"] for ticket_type in ticket_types),
+    ).fetchall()
+    if len(locked_types) != len(ticket_types):
+        db.rollback()
+        return jsonify({"error": "One or more ticket types are no longer available."}), 409
+    for ticket_type, quantity, _unit_price in priced_items:
+        available = remaining_tickets(ticket_type)
+        if quantity > available:
+            db.rollback()
+            return jsonify({
+                "error": f"Not enough {ticket_type['name']} tickets remain.",
+                "available": available,
+            }), 409
+
+    created_at = datetime.now(timezone.utc)
+    expires_at = created_at + timedelta(minutes=RESERVATION_HOLD_MINUTES)
+    payment_reference = f"PT-{uuid.uuid4().hex.upper()}"
+    cursor = db.execute(
+        "INSERT INTO orders (ticket_type_id, buyer_name, buyer_email, quantity, status, "
+        "created_at, expires_at, payment_provider, payment_reference, payment_amount, "
+        "payment_currency, payment_status) "
+        "VALUES (?, ?, ?, ?, 'pending', ?, ?, 'manual_mpesa', ?, ?, 'KES', 'pending') "
+        "RETURNING id",
+        (
+            priced_items[0][0]["id"],
+            buyer_name,
+            buyer_email,
+            total_quantity,
+            created_at.isoformat(),
+            expires_at.isoformat(),
+            payment_reference,
+            total_amount,
+        ),
+    )
+    order_id = inserted_id(cursor)
+    db.executemany(
+        "INSERT INTO order_items (order_id, ticket_type_id, quantity, unit_price) "
+        "VALUES (?, ?, ?, ?)",
+        [
+            (order_id, ticket_type["id"], quantity, unit_price)
+            for ticket_type, quantity, unit_price in priced_items
+        ],
+    )
+    db.commit()
+    return jsonify({
+        "order": {
+            "id": order_id,
+            "payment_reference": payment_reference,
+            "buyer_name": buyer_name,
+            "quantity": total_quantity,
+            "ticket_items": [
+                {
+                    "ticket_type": ticket_type["name"],
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "subtotal": unit_price * quantity,
+                }
+                for ticket_type, quantity, unit_price in priced_items
+            ],
+            "payment_amount": total_amount,
+            "payment_currency": "KES",
+            "payment_status": "pending",
+            "status": "pending",
+            "expires_at": expires_at.isoformat(),
+        }
+    }), 201
+
+
+@app.post("/api/v1/payments/<payment_reference>/manual-receipt")
+def api_submit_manual_receipt(payment_reference):
+    """Record a buyer's M-Pesa receipt code without treating it as proof of payment."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+    transaction_code = str(data.get("transaction_code", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{6,20}", transaction_code):
+        return jsonify({"error": "Enter a valid M-Pesa transaction code."}), 400
+
+    db = get_db()
+    expire_pending_reservations(db)
+    db.commit()
+    locked_order = lock_row(
+        db,
+        "SELECT id FROM orders WHERE payment_reference = ?",
+        (payment_reference,),
+    ).fetchone()
+    if locked_order is None:
+        db.rollback()
+        return jsonify({"error": "Order reference not found."}), 404
+    order = db.execute(
+        "SELECT id, status, expires_at, payment_provider, payment_status "
+        "FROM orders WHERE id = ?",
+        (locked_order["id"],),
+    ).fetchone()
+    if order["payment_provider"] != "manual_mpesa":
+        db.rollback()
+        return jsonify({"error": "This order does not use manual M-Pesa payment."}), 409
+    if order["status"] != "pending" or order["expires_at"] <= datetime.now(timezone.utc).isoformat():
+        db.rollback()
+        return jsonify({"error": "This order has expired or is no longer payable."}), 409
+    if order["payment_status"] != "pending":
+        db.rollback()
+        return jsonify({"error": "A payment receipt has already been submitted for this order."}), 409
+
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    inserted = db.execute(
+        "INSERT INTO manual_payment_submissions "
+        "(order_id, transaction_code, submitted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT DO NOTHING",
+        (order["id"], transaction_code, submitted_at),
+    )
+    if inserted.rowcount != 1:
+        existing = db.execute(
+            "SELECT order_id FROM manual_payment_submissions WHERE transaction_code = ?",
+            (transaction_code,),
+        ).fetchone()
+        db.rollback()
+        if existing and existing["order_id"] == order["id"]:
+            return jsonify({"error": "A payment receipt has already been submitted for this order."}), 409
+        return jsonify({"error": "That M-Pesa transaction code was already submitted."}), 409
+    db.execute(
+        "UPDATE orders SET payment_status = 'submitted' WHERE id = ?",
+        (order["id"],),
+    )
+    db.commit()
+    return jsonify({
+        "payment_reference": payment_reference,
+        "payment_status": "submitted",
+        "reservation_status": "pending",
+    }), 202
+
+
 @app.post("/api/v1/ticket-types/<int:ticket_type_id>/reservations")
 def api_reserve_tickets(ticket_type_id):
     """Hold tickets for 15 minutes while the buyer tries to pay."""
@@ -323,6 +555,11 @@ def api_reserve_tickets(ticket_type_id):
          payment_amount),
     )
     order_id = inserted_id(cursor)
+    db.execute(
+        "INSERT INTO order_items (order_id, ticket_type_id, quantity, unit_price) "
+        "VALUES (?, ?, ?, ?)",
+        (order_id, ticket_type_id, quantity, int(Decimal(str(ticket_type["price"])))),
+    )
     db.commit()
     reservation = {
         "id": order_id,
@@ -412,6 +649,11 @@ def _issue_tickets(db, order_id):
     if order is None:
         raise LookupError(f"Reservation {order_id} was not found while issuing tickets.")
 
+    items = db.execute(
+        "SELECT ticket_type_id, quantity FROM order_items "
+        "WHERE order_id = ? ORDER BY ticket_type_id",
+        (order_id,),
+    ).fetchall()
     existing_numbers = {
         row["ticket_number"]
         for row in db.execute(
@@ -419,27 +661,37 @@ def _issue_tickets(db, order_id):
         ).fetchall()
     }
     issued_at = datetime.now(timezone.utc).isoformat()
-    for ticket_number in range(1, order["quantity"] + 1):
-        if ticket_number in existing_numbers:
-            continue
-        ticket_code = f"PTK-{secrets.token_hex(16).upper()}"
-        db.execute(
-            "INSERT INTO tickets "
-            "(order_id, ticket_number, ticket_code, status, issued_at) "
-            "VALUES (?, ?, ?, 'issued', ?) ON CONFLICT DO NOTHING",
-            (order_id, ticket_number, ticket_code, issued_at),
-        )
+    ticket_number = 0
+    for item in items:
+        for _ in range(item["quantity"]):
+            ticket_number += 1
+            if ticket_number in existing_numbers:
+                continue
+            ticket_code = f"PTK-{secrets.token_hex(16).upper()}"
+            db.execute(
+                "INSERT INTO tickets "
+                "(order_id, ticket_type_id, ticket_number, ticket_code, status, issued_at) "
+                "VALUES (?, ?, ?, ?, 'issued', ?) ON CONFLICT DO NOTHING",
+                (
+                    order_id,
+                    item["ticket_type_id"],
+                    ticket_number,
+                    ticket_code,
+                    issued_at,
+                ),
+            )
 
 
 def _tickets_for_order(db, order_id):
     rows = db.execute(
         "SELECT tickets.ticket_number, tickets.ticket_code, tickets.status, "
         "tickets.issued_at, tickets.checked_in_at, ticket_types.name AS ticket_type, "
-        "events.name AS event_name, events.starts_at AS event_starts_at, "
+        "orders.buyer_name AS buyer_name, events.name AS event_name, "
+        "events.starts_at AS event_starts_at, "
         "events.venue AS event_venue "
         "FROM tickets "
         "JOIN orders ON orders.id = tickets.order_id "
-        "JOIN ticket_types ON ticket_types.id = orders.ticket_type_id "
+        "JOIN ticket_types ON ticket_types.id = tickets.ticket_type_id "
         "JOIN events ON events.id = ticket_types.event_id "
         "WHERE tickets.order_id = ? ORDER BY tickets.ticket_number",
         (order_id,),
@@ -447,10 +699,12 @@ def _tickets_for_order(db, order_id):
     return [{
         "ticket_number": row["ticket_number"],
         "ticket_code": row["ticket_code"],
+        "buyer_name": row["buyer_name"],
         "qr_svg": generate_qr_svg(row["ticket_code"]),
         "ticket_svg": generate_ticket_svg(
             event_name=row["event_name"],
             ticket_type=row["ticket_type"],
+            buyer_name=row["buyer_name"],
             ticket_number=row["ticket_number"],
             ticket_code=row["ticket_code"],
             starts_at=row["event_starts_at"],
@@ -588,7 +842,7 @@ def api_admin_ticket_check_in():
         "ticket_types.name AS ticket_type, events.name AS event_name "
         "FROM tickets "
         "JOIN orders ON orders.id = tickets.order_id "
-        "JOIN ticket_types ON ticket_types.id = orders.ticket_type_id "
+        "JOIN ticket_types ON ticket_types.id = tickets.ticket_type_id "
         "JOIN events ON events.id = ticket_types.event_id "
         "WHERE tickets.ticket_code = ?",
         (ticket_code,),
@@ -843,6 +1097,68 @@ def api_sandbox_callback(provider, callback_token):
     })
 
 
+@app.post("/api/v1/admin/payments/<payment_reference>/review")
+@admin_required
+def api_admin_review_manual_payment(payment_reference):
+    """Approve or reject a submitted manual M-Pesa receipt."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get("decision") not in {"approve", "reject"}:
+        return jsonify({"error": "Set decision to approve or reject."}), 400
+
+    db = get_db()
+    expire_pending_reservations(db)
+    db.commit()
+    locked_order = lock_row(
+        db,
+        "SELECT id FROM orders WHERE payment_reference = ?",
+        (payment_reference,),
+    ).fetchone()
+    if locked_order is None:
+        db.rollback()
+        return jsonify({"error": "Order reference not found."}), 404
+    order = db.execute(
+        "SELECT id, status, expires_at, payment_provider, payment_status "
+        "FROM orders WHERE id = ?",
+        (locked_order["id"],),
+    ).fetchone()
+    if order["payment_provider"] != "manual_mpesa":
+        db.rollback()
+        return jsonify({"error": "This order does not use manual M-Pesa payment."}), 409
+    if order["status"] != "pending" or order["payment_status"] != "submitted":
+        db.rollback()
+        return jsonify({"error": "This order has no reviewable payment submission."}), 409
+    if order["expires_at"] <= datetime.now(timezone.utc).isoformat():
+        db.rollback()
+        return jsonify({"error": "This order has expired; its tickets have been released."}), 409
+
+    submission = db.execute(
+        "SELECT transaction_code FROM manual_payment_submissions WHERE order_id = ?",
+        (order["id"],),
+    ).fetchone()
+    if submission is None:
+        db.rollback()
+        return jsonify({"error": "The M-Pesa transaction code was not found."}), 409
+
+    if data["decision"] == "approve":
+        payment_status, reservation_status = _record_provider_result(
+            db, order, True, submission["transaction_code"]
+        )
+    else:
+        db.execute(
+            "UPDATE orders SET status = 'rejected', payment_status = 'rejected', "
+            "provider_transaction_id = ? WHERE id = ?",
+            (submission["transaction_code"], order["id"]),
+        )
+        db.commit()
+        payment_status, reservation_status = "rejected", "rejected"
+
+    return jsonify({
+        "payment_reference": payment_reference,
+        "payment_status": payment_status,
+        "reservation_status": reservation_status,
+    })
+
+
 @app.get("/api/v1/admin/events")
 @admin_required
 def api_admin_event_sales():
@@ -856,9 +1172,10 @@ def api_admin_event_sales():
     for event in events:
         rows = db.execute(
             "SELECT t.id, t.name, t.price, t.capacity, "
-            "COALESCE(SUM(CASE WHEN o.status = 'confirmed' THEN o.quantity ELSE 0 END), 0) AS sold, "
-            "COALESCE(SUM(CASE WHEN o.status = 'pending' THEN o.quantity ELSE 0 END), 0) AS pending "
-            "FROM ticket_types t LEFT JOIN orders o ON o.ticket_type_id = t.id "
+            "COALESCE(SUM(CASE WHEN o.status = 'confirmed' THEN i.quantity ELSE 0 END), 0) AS sold, "
+            "COALESCE(SUM(CASE WHEN o.status = 'pending' THEN i.quantity ELSE 0 END), 0) AS pending "
+            "FROM ticket_types t LEFT JOIN order_items i ON i.ticket_type_id = t.id "
+            "LEFT JOIN orders o ON o.id = i.order_id "
             "WHERE t.event_id = ? GROUP BY t.id ORDER BY t.price, t.id",
             (event["id"],),
         ).fetchall()
@@ -907,33 +1224,53 @@ def api_admin_reservations(event_id):
     rows = db.execute(
         "SELECT o.id, o.buyer_name, o.buyer_email, o.quantity, o.status, o.created_at, o.expires_at, "
         "o.payment_provider, o.payment_phone, o.payment_reference, o.payment_amount, o.payment_currency, o.payment_status, "
-        "t.id AS ticket_type_id, t.name AS ticket_type "
+        "t.id AS ticket_type_id, t.name AS ticket_type, "
+        "m.transaction_code AS manual_transaction_code "
         "FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
+        "LEFT JOIN manual_payment_submissions m ON m.order_id = o.id "
         "WHERE t.event_id = ? ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?",
         (event_id, limit, offset),
     ).fetchall()
+    items_by_order = {}
+    if rows:
+        order_ids = [row["id"] for row in rows]
+        placeholders = ", ".join("?" for _ in order_ids)
+        item_rows = db.execute(
+            "SELECT i.order_id, i.ticket_type_id, i.quantity, t.name AS ticket_type "
+            "FROM order_items i JOIN ticket_types t ON t.id = i.ticket_type_id "
+            f"WHERE i.order_id IN ({placeholders}) ORDER BY i.order_id, t.id",
+            tuple(order_ids),
+        ).fetchall()
+        for item in item_rows:
+            items_by_order.setdefault(item["order_id"], []).append(item)
     total = db.execute(
         "SELECT COUNT(*) AS count FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id"
         " WHERE t.event_id = ?",
         (event_id,),
     ).fetchone()["count"]
-    reservations = [{
-        "id": row["id"],
-        "buyer_name": row["buyer_name"],
-        "buyer_email": row["buyer_email"],
-        "ticket_type_id": row["ticket_type_id"],
-        "ticket_type": row["ticket_type"],
-        "quantity": row["quantity"],
-        "status": row["status"],
-        "payment_provider": row["payment_provider"],
-        "payment_phone": row["payment_phone"],
-        "payment_reference": row["payment_reference"],
-        "payment_amount": row["payment_amount"],
-        "payment_currency": row["payment_currency"],
-        "payment_status": row["payment_status"],
-        "created_at": row["created_at"],
-        "expires_at": row["expires_at"],
-    } for row in rows]
+    reservations = []
+    for row in rows:
+        items = items_by_order.get(row["id"], [])
+        reservations.append({
+            "id": row["id"],
+            "buyer_name": row["buyer_name"],
+            "buyer_email": row["buyer_email"],
+            "ticket_type_id": row["ticket_type_id"] if len(items) <= 1 else None,
+            "ticket_type": ", ".join(
+                f"{item['quantity']} × {item['ticket_type']}" for item in items
+            ) or row["ticket_type"],
+            "quantity": row["quantity"],
+            "status": row["status"],
+            "payment_provider": row["payment_provider"],
+            "payment_phone": row["payment_phone"],
+            "payment_reference": row["payment_reference"],
+            "payment_amount": row["payment_amount"],
+            "payment_currency": row["payment_currency"],
+            "payment_status": row["payment_status"],
+            "manual_transaction_code": row["manual_transaction_code"],
+            "created_at": row["created_at"],
+            "expires_at": row["expires_at"],
+        })
     return jsonify({
         "event": {"id": event["id"], "name": event["name"]},
         "reservations": reservations,

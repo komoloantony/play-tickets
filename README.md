@@ -32,6 +32,28 @@ The backend uses PostgreSQL when `DATABASE_URL` (or `PLAY_TICKETS_DATABASE_URL`)
 
 Set `PLAY_TICKETS_ADMIN_TOKEN`, `PLAY_TICKETS_SECRET`, payment credentials, and trusted CORS origins through the Render environment settings as appropriate. Do not enable live payments until provider credentials, HTTPS callbacks, and production settings have been verified.
 
+### Manual M-Pesa checkout (default)
+
+The site defaults to manual payment by **Pochi la Biashara: 0711422001**. Buyers choose ticket quantities, see the calculated amount and order reference, pay that exact amount, and submit the M-Pesa transaction code. The backend attaches the code to that order, prevents reuse, and holds its ticket quantities for 15 minutes. An organizer must verify the payment in the admin page and approve it before the backend issues tickets. No Daraja, IntaSend, or M-Pesa sandbox credentials are needed.
+
+The number and label can be overridden with environment variables. For a Render deployment, set these in the web service's environment settings so it uses this checkout even if an older payment mode is configured:
+
+```text
+PLAY_TICKETS_PAYMENT_MODE=manual
+PLAY_TICKETS_MPESA_TILL_NUMBER=0711422001
+PLAY_TICKETS_MPESA_METHOD_LABEL=Pochi la Biashara
+PLAY_TICKETS_ADMIN_TOKEN=<private-long-random-value>
+```
+
+For local testing, set an admin token before starting the backend:
+
+```powershell
+$env:PLAY_TICKETS_ADMIN_TOKEN = "use-a-long-private-random-value"
+python app.py
+```
+
+Keep the admin token private. Enter it on `Frontend/admin.html`; the reservations table shows each ticket type and quantity, total amount, submitted transaction code, and approve/reject controls. Approval is a manual organizer action after checking the payment in M-Pesa.
+
 ### Copy existing SQLite records to PostgreSQL
 
 The repository does not contain `play_tickets.db`, but the local file can be copied to an **empty** PostgreSQL database. The migration script preserves event, ticket-type, reservation, and issued-ticket IDs and refuses to copy into a database that already contains records. Keep the SQLite file as a backup until the destination is verified.
@@ -54,7 +76,7 @@ python -m http.server 8000
 
 Then open `http://127.0.0.1:8000/` in a browser. Opening `partner-frontend/event.html` directly also shows the event details and ticket prices, but booking requires both local servers and the `http://127.0.0.1:8000/event.html` address. The backend allows browser requests from local ports 8000 and 8001 by default. Set `PLAY_TICKETS_CORS_ORIGINS` to a comma-separated list to use other trusted frontend origins. Create a `Behind the Sins` event and its ticket categories with the admin API before booking it.
 
-`Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend, then starts an M-Pesa or Airtel Money payment request. It polls the payment-status endpoint until the provider confirms or declines the transaction. Each confirmed reservation receives one unique QR entry ticket per quantity purchased; buyers can display the QR codes and printed codes on the confirmation page. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
+`Frontend/checkout.js` and `partner-frontend/event.js` create reservations through the API. The partner event page loads ticket prices and availability from the backend. In manual mode, buyers select their ticket quantities, pay the displayed total to the prominently displayed, copyable Pochi la Biashara number, and submit the M-Pesa transaction code for organizer verification. Each approved order receives one unique QR entry ticket per quantity purchased. The default local API base is `http://127.0.0.1:5000`; when hosting the frontend and API on different origins, define `window.PLAY_TICKETS_API_BASE` before loading the page script and allow that frontend origin in `PLAY_TICKETS_CORS_ORIGINS`.
 
 ### Admin review page
 
@@ -76,6 +98,10 @@ All API routes use the `/api/v1` prefix and exchange JSON.
 | `GET` | `/api/v1/health` | Check that the backend is available. |
 | `GET` | `/api/v1/events` | List events, ticket types, prices, and available quantities. |
 | `GET` | `/api/v1/events/<event_id>` | Get one event and its ticket types. |
+| `GET` | `/api/v1/payment-options` | Return the active payment mode and public Pochi number. |
+| `POST` | `/api/v1/events/<event_id>/orders` | Create and hold a manual M-Pesa order with one or more ticket types. |
+| `POST` | `/api/v1/payments/<payment_reference>/manual-receipt` | Attach a buyer-submitted M-Pesa code to its order. |
+| `POST` | `/api/v1/admin/payments/<payment_reference>/review` | Approve or reject a submitted M-Pesa code (admin token required). |
 | `POST` | `/api/v1/events` | Create an event and its first ticket type (admin token required). |
 | `POST` | `/api/v1/events/<event_id>/ticket-types` | Add a ticket category (admin token required). |
 | `POST` | `/api/v1/ticket-types/<ticket_type_id>/reservations` | Hold tickets while the buyer completes payment. |

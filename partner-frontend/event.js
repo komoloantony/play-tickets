@@ -24,8 +24,24 @@ const eventVenue = document.getElementById("event-venue");
 const ticketTypeSelect = document.getElementById("ticket-type");
 const quantitySelect = document.getElementById("ticket-quantity");
 const submitButton = bookingForm.querySelector('button[type="submit"]');
+const providerPaymentFields = document.getElementById("provider-payment-fields");
+const manualPaymentFields = document.getElementById("manual-payment-fields");
+const manualTicketQuantities = document.getElementById("manual-ticket-quantities");
+const manualOrderTotal = document.getElementById("manual-order-total");
+const manualPaymentPanel = document.getElementById("manual-payment-panel");
+const manualPaymentInstructions = document.getElementById("manual-payment-instructions");
+const mpesaPaymentNumber = document.getElementById("mpesa-payment-number");
+const copyPaymentNumberButton = document.getElementById("copy-payment-number");
+const copyPaymentFeedback = document.getElementById("copy-payment-feedback");
+const manualOrderExpiry = document.getElementById("manual-order-expiry");
+const manualReceiptForm = document.getElementById("manual-receipt-form");
+const manualReceiptFeedback = document.getElementById("manual-receipt-feedback");
+const manualReceiptSubmit = document.getElementById("submit-manual-receipt");
+const manualTransactionCode = document.getElementById("manual-transaction-code");
 
 let eventRecord;
+let paymentOptions;
+let manualCheckoutEnabled = false;
 let paymentReference;
 let pollingTimer;
 let pollingInProgress = false;
@@ -74,6 +90,8 @@ function renderIssuedTickets(tickets, reference) {
     heading.textContent = `${ticket.ticket_type} · Ticket ${ticket.ticket_number}`;
     const eventName = document.createElement("p");
     eventName.textContent = ticket.event_name;
+    const buyerName = document.createElement("p");
+    buyerName.textContent = `Ticket holder: ${ticket.buyer_name}`;
     const qrContainer = document.createElement("div");
     qrContainer.className = "ticket-qr";
     const qrImage = document.createElement("img");
@@ -87,7 +105,7 @@ function renderIssuedTickets(tickets, reference) {
     download.href = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(ticket.ticket_svg)}`;
     download.download = `behind-the-sins-ticket-${ticket.ticket_number}.svg`;
     download.textContent = "Download printable ticket";
-    card.append(heading, eventName, qrContainer, code, download);
+    card.append(heading, eventName, buyerName, qrContainer, code, download);
     issuedTickets.append(card);
   }
 }
@@ -151,13 +169,78 @@ function renderTicketTypes() {
   updateQuantityOptions();
 }
 
+function updateManualOrderTotal() {
+  const inputs = manualTicketQuantities.querySelectorAll("input[data-ticket-type-id]");
+  let quantity = 0;
+  let total = 0;
+  const itemSummaries = [];
+  for (const input of inputs) {
+    const selectedQuantity = Number(input.value);
+    if (!Number.isInteger(selectedQuantity) || selectedQuantity < 1) continue;
+    const ticket = eventRecord.ticket_types.find(
+      (item) => String(item.id) === input.dataset.ticketTypeId
+    );
+    if (!ticket) continue;
+    quantity += selectedQuantity;
+    const subtotal = selectedQuantity * Number(ticket.price);
+    total += subtotal;
+    itemSummaries.push(
+      `${selectedQuantity} × ${ticket.name}: KSh ${subtotal.toLocaleString("en-KE")}`
+    );
+  }
+  manualOrderTotal.textContent = quantity
+    ? `${itemSummaries.join(" + ")} · Total: KSh ${total.toLocaleString("en-KE")}`
+    : "Select at least one ticket.";
+  submitButton.disabled = quantity < 1 || quantity > 10;
+}
+
+function renderManualTicketQuantities() {
+  manualTicketQuantities.replaceChildren();
+  for (const ticket of eventRecord.ticket_types) {
+    const row = document.createElement("label");
+    row.className = "manual-ticket-row";
+    const description = document.createElement("span");
+    description.textContent =
+      `${ticket.name} · KSh ${Number(ticket.price).toLocaleString("en-KE")} · ${ticket.available} available`;
+    const quantity = document.createElement("input");
+    quantity.type = "number";
+    quantity.min = "0";
+    quantity.max = String(Math.min(10, Number(ticket.available)));
+    quantity.step = "1";
+    quantity.value = "0";
+    quantity.dataset.ticketTypeId = String(ticket.id);
+    quantity.disabled = Number(ticket.available) < 1;
+    quantity.addEventListener("input", updateManualOrderTotal);
+    row.append(description, quantity);
+    manualTicketQuantities.append(row);
+  }
+  updateManualOrderTotal();
+}
+
+function configureManualCheckout() {
+  providerPaymentFields.hidden = manualCheckoutEnabled;
+  for (const control of providerPaymentFields.querySelectorAll("select, input")) {
+    control.disabled = manualCheckoutEnabled;
+    control.required = !manualCheckoutEnabled;
+  }
+  manualPaymentFields.hidden = !manualCheckoutEnabled;
+  if (manualCheckoutEnabled) {
+    renderManualTicketQuantities();
+    document.getElementById("checkout-instructions").textContent =
+      "Select Regular, VIP, or both. Your ticket quantities will be held for 15 minutes while you pay.";
+  }
+}
+
 async function loadEvent() {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/events`);
-    const data = await parseJsonResponse(response);
-    if (!response.ok) {
-      throw new Error(data.error || "Ticket sales are unavailable.");
-    }
+    const [response, optionsResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/v1/events`),
+      fetch(`${API_BASE}/api/v1/payment-options`)
+    ]);
+    const data = await getJsonResponse(response);
+    const optionsData = await getJsonResponse(optionsResponse);
+    paymentOptions = optionsData.payment_options;
+    manualCheckoutEnabled = paymentOptions.mode === "manual";
     eventRecord = (data.events || []).find(
       (item) => item.name.trim().toLowerCase() === "behind the sins"
     );
@@ -176,6 +259,7 @@ async function loadEvent() {
       }).format(startsAt);
     eventVenue.textContent = eventRecord.venue;
     renderTicketTypes();
+    configureManualCheckout();
     if (eventRecord.ticket_types.length === 0) {
       throw new Error("Ticket types have not been set up for this event.");
     }
@@ -202,6 +286,77 @@ async function getJsonResponse(response) {
   return data;
 }
 
+async function createManualOrder() {
+  const ticketItems = [...manualTicketQuantities.querySelectorAll("input[data-ticket-type-id]")]
+    .map((input) => ({
+      ticket_type_id: Number(input.dataset.ticketTypeId),
+      quantity: Number(input.value)
+    }))
+    .filter((item) => item.quantity > 0);
+  if (!ticketItems.length) {
+    throw new Error("Choose at least one ticket.");
+  }
+
+  const response = await fetch(`${API_BASE}/api/v1/events/${eventRecord.id}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      buyer_name: document.getElementById("buyer-name").value.trim(),
+      buyer_email: document.getElementById("buyer-email").value.trim(),
+      ticket_items: ticketItems
+    })
+  });
+  const data = await getJsonResponse(response);
+  paymentReference = data.order.payment_reference;
+  issuedTickets.replaceChildren();
+  manualReceiptForm.reset();
+  manualTransactionCode.disabled = false;
+  manualReceiptForm.hidden = false;
+  manualReceiptSubmit.disabled = false;
+  manualReceiptFeedback.textContent = "";
+  copyPaymentFeedback.textContent = "";
+  const itemSummary = data.order.ticket_items
+    .map((item) =>
+      `${item.quantity} × ${item.ticket_type} (KSh ${Number(item.subtotal).toLocaleString("en-KE")})`
+    )
+    .join(" + ");
+  manualPaymentInstructions.textContent =
+    `${itemSummary}. Total: KSh ${Number(data.order.payment_amount).toLocaleString("en-KE")}. ` +
+    `Pay the exact amount to ${paymentOptions.mpesa.method}. ` +
+    `Enter your M-Pesa transaction code below. Keep reference ${paymentReference}.`;
+  mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+  manualOrderExpiry.textContent =
+    `Your tickets are held until ${new Date(data.order.expires_at).toLocaleTimeString()}.`;
+  manualPaymentPanel.hidden = false;
+  bookingForm.hidden = true;
+  showPaymentStatus(
+    "Order reserved",
+    "Complete the M-Pesa payment, then submit the transaction code below. Tickets are issued only after the organizer verifies payment.",
+    paymentReference
+  );
+  submitButton.disabled = true;
+  pollingTimer = window.setInterval(checkPaymentStatus, PAYMENT_POLL_INTERVAL_MS);
+  await checkPaymentStatus();
+}
+
+copyPaymentNumberButton.addEventListener("click", async () => {
+  const number = mpesaPaymentNumber.textContent.trim();
+  if (!number) {
+    copyPaymentFeedback.textContent = "The payment number is unavailable. Contact the organizer.";
+    return;
+  }
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    copyPaymentFeedback.textContent = "Copy is unavailable here. Select and copy the number above.";
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(number);
+    copyPaymentFeedback.textContent = `Copied ${number}.`;
+  } catch {
+    copyPaymentFeedback.textContent = "Could not copy. Select and copy the number above.";
+  }
+});
+
 async function checkPaymentStatus() {
   if (!paymentReference || pollingInProgress) return;
   pollingInProgress = true;
@@ -227,6 +382,7 @@ async function checkPaymentStatus() {
       renderIssuedTickets(data.tickets, paymentReference);
       window.clearInterval(pollingTimer);
       submitButton.disabled = true;
+      if (manualCheckoutEnabled) manualReceiptForm.hidden = true;
     } else if (data.refund_or_support_required) {
       showPaymentStatus(
         "Payment received — contact the organizer",
@@ -244,6 +400,18 @@ async function checkPaymentStatus() {
       window.clearInterval(pollingTimer);
       submitButton.disabled = false;
       paymentReference = null;
+    } else if (data.payment_status === "rejected") {
+      showPaymentStatus(
+        "Payment not approved",
+        "The organizer rejected this payment submission and released the ticket hold. Contact the organizer if you believe this is a mistake.",
+        paymentReference
+      );
+      window.clearInterval(pollingTimer);
+      manualPaymentPanel.hidden = true;
+      bookingForm.hidden = false;
+      manualTransactionCode.disabled = false;
+      submitButton.disabled = false;
+      paymentReference = null;
     } else if (data.reservation_status === "expired") {
       showPaymentStatus(
         "Reservation expired",
@@ -251,8 +419,22 @@ async function checkPaymentStatus() {
         paymentReference
       );
       window.clearInterval(pollingTimer);
+      manualPaymentPanel.hidden = true;
+      bookingForm.hidden = false;
+      manualTransactionCode.disabled = false;
       submitButton.disabled = false;
       paymentReference = null;
+    } else if (manualCheckoutEnabled) {
+      showPaymentStatus(
+        data.payment_status === "submitted"
+          ? "Payment code submitted — awaiting verification"
+          : "Order reserved — awaiting payment",
+        data.payment_status === "submitted"
+          ? "The organizer is checking your M-Pesa transaction. Keep this page open; tickets appear here after approval."
+          : "Pay using the Pochi la Biashara number above, then submit your M-Pesa transaction code.",
+        paymentReference,
+        false
+      );
     } else {
       showPaymentStatus(
         "Waiting for payment",
@@ -286,6 +468,16 @@ bookingForm.addEventListener("submit", async (event) => {
   if (!bookingForm.reportValidity() || !eventRecord || paymentReference) return;
 
   submitButton.disabled = true;
+  if (manualCheckoutEnabled) {
+    try {
+      await createManualOrder();
+    } catch (error) {
+      paymentFeedback.textContent = error.message;
+      submitButton.disabled = false;
+    }
+    return;
+  }
+
   paymentFeedback.textContent = "Creating your reservation and sending the payment request…";
   try {
     const response = await fetch(
@@ -328,6 +520,33 @@ bookingForm.addEventListener("submit", async (event) => {
   } catch (error) {
     paymentFeedback.textContent = error.message;
     submitButton.disabled = false;
+  }
+});
+
+manualReceiptForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!manualReceiptForm.reportValidity() || !paymentReference) return;
+  manualReceiptSubmit.disabled = true;
+  manualReceiptFeedback.textContent = "Submitting transaction code…";
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/v1/payments/${encodeURIComponent(paymentReference)}/manual-receipt`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transaction_code: manualTransactionCode.value.trim()
+        })
+      }
+    );
+    const data = await getJsonResponse(response);
+    manualReceiptFeedback.textContent =
+      `Code received for ${data.payment_reference}. Waiting for organizer verification.`;
+    manualTransactionCode.disabled = true;
+    await checkPaymentStatus();
+  } catch (error) {
+    manualReceiptFeedback.textContent = error.message;
+    manualReceiptSubmit.disabled = false;
   }
 });
 

@@ -8,11 +8,23 @@ const CHECKOUT_API_BASE = window.PLAY_TICKETS_API_BASE ||
 
 const checkoutForm = document.getElementById("booking-form");
 const checkoutResults = document.getElementById("ticket-results");
+const providerPaymentFields = document.getElementById("provider-payment-fields");
+const manualPaymentPanel = document.getElementById("manual-payment-panel");
+const manualPaymentInstructions = document.getElementById("manual-payment-instructions");
+const mpesaPaymentNumber = document.getElementById("mpesa-payment-number");
+const copyPaymentNumberButton = document.getElementById("copy-payment-number");
+const copyPaymentFeedback = document.getElementById("copy-payment-feedback");
+const manualReceiptForm = document.getElementById("manual-receipt-form");
+const manualTransactionCode = document.getElementById("manual-transaction-code");
+const manualReceiptSubmit = document.getElementById("submit-manual-receipt");
+const manualReceiptFeedback = document.getElementById("manual-receipt-feedback");
 let checkoutEvent;
 let pendingReservation;
 let checkoutListenerAttached = false;
 let paymentPollingTimer;
 let paymentPollingInProgress = false;
+let manualCheckoutEnabled = false;
+let paymentOptions;
 
 function showCheckoutResult(title, message, reference) {
   checkoutResults.replaceChildren();
@@ -102,6 +114,7 @@ function startLivePaymentPolling(reservation) {
       } else if (data.payment_status === "succeeded" && data.reservation_status === "confirmed") {
         reservation.payment_status = data.payment_status;
         reservation.status = data.reservation_status;
+        manualPaymentPanel.hidden = true;
         showCheckoutResult(
           "Payment confirmed",
           "Your payment is confirmed. Show each entry QR code at the door.",
@@ -127,6 +140,19 @@ function startLivePaymentPolling(reservation) {
           reservation.payment_reference
         );
         window.clearInterval(paymentPollingTimer);
+        manualPaymentPanel.hidden = true;
+        pendingReservation = null;
+        checkoutForm.querySelector('button[type="submit"]').disabled = false;
+      } else if (data.payment_status === "rejected") {
+        showCheckoutResult(
+          "Payment not approved",
+          "The organizer rejected this payment submission and released the ticket hold. Contact the organizer if you believe this is a mistake.",
+          reservation.payment_reference
+        );
+        window.clearInterval(paymentPollingTimer);
+        manualPaymentPanel.hidden = true;
+        checkoutForm.hidden = false;
+        manualTransactionCode.disabled = false;
         pendingReservation = null;
         checkoutForm.querySelector('button[type="submit"]').disabled = false;
       } else if (data.reservation_status === "expired") {
@@ -138,8 +164,21 @@ function startLivePaymentPolling(reservation) {
           reservation.payment_reference
         );
         window.clearInterval(paymentPollingTimer);
+        manualPaymentPanel.hidden = true;
+        checkoutForm.hidden = false;
+        manualTransactionCode.disabled = false;
         pendingReservation = null;
         checkoutForm.querySelector('button[type="submit"]').disabled = false;
+      } else if (manualCheckoutEnabled) {
+        showCheckoutResult(
+          data.payment_status === "submitted"
+            ? "Payment code submitted — awaiting verification"
+            : "Order reserved — awaiting payment",
+          data.payment_status === "submitted"
+            ? "The organizer is checking your M-Pesa transaction. Keep this page open; tickets appear here after approval."
+            : "Pay using the Pochi la Biashara number above, then submit your M-Pesa transaction code.",
+          reservation.payment_reference
+        );
       }
     } catch (error) {
       showCheckoutResult(
@@ -156,6 +195,119 @@ function startLivePaymentPolling(reservation) {
   paymentPollingTimer = window.setInterval(checkStatus, 8000);
 }
 
+async function createManualOrder() {
+  const ticketTypeId = Number(document.getElementById("ticket-type").value);
+  const quantity = Number(document.getElementById("ticket-quantity").value);
+  const response = await fetch(
+    `${CHECKOUT_API_BASE}/api/v1/events/${encodeURIComponent(checkoutEvent.id)}/orders`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buyer_name: document.getElementById("buyer-name").value.trim(),
+        buyer_email: document.getElementById("buyer-email").value.trim(),
+        ticket_items: [{ ticket_type_id: ticketTypeId, quantity }]
+      })
+    }
+  );
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not create the order.");
+
+  pendingReservation = {
+    ...data.order,
+    payment_mode: "manual",
+    payment_status: "pending",
+    status: "pending"
+  };
+  const itemSummary = data.order.ticket_items
+    .map((item) =>
+      `${item.quantity} × ${item.ticket_type} (KSh ${Number(item.subtotal).toLocaleString("en-KE")})`
+    )
+    .join(" + ");
+  manualPaymentInstructions.textContent =
+    `${itemSummary}. Total: KSh ${Number(data.order.payment_amount).toLocaleString("en-KE")}. ` +
+    `Pay the exact amount to ${paymentOptions.mpesa.method}. ` +
+    `Enter your M-Pesa transaction code below. Keep reference ${data.order.payment_reference}.`;
+  mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+  copyPaymentFeedback.textContent = "";
+  manualReceiptForm.reset();
+  manualTransactionCode.disabled = false;
+  manualReceiptSubmit.disabled = false;
+  manualReceiptFeedback.textContent = "";
+  manualPaymentPanel.hidden = false;
+  checkoutForm.hidden = true;
+  const expiry = new Date(data.order.expires_at).toLocaleTimeString();
+  showCheckoutResult(
+    "Order reserved",
+    `Your tickets are held until ${expiry}. Pay the total above and submit your M-Pesa transaction code.`,
+    data.order.payment_reference
+  );
+}
+
+copyPaymentNumberButton.addEventListener("click", async () => {
+  const number = mpesaPaymentNumber.textContent.trim();
+  if (!number) {
+    copyPaymentFeedback.textContent = "The payment number is unavailable. Contact the organizer.";
+    return;
+  }
+  if (!navigator.clipboard || !navigator.clipboard.writeText) {
+    copyPaymentFeedback.textContent = "Copy is unavailable here. Select and copy the number above.";
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(number);
+    copyPaymentFeedback.textContent = `Copied ${number}.`;
+  } catch {
+    copyPaymentFeedback.textContent = "Could not copy. Select and copy the number above.";
+  }
+});
+
+async function submitManualReceipt(event) {
+  event.preventDefault();
+  if (!pendingReservation || !manualReceiptForm.reportValidity()) return;
+
+  manualReceiptSubmit.disabled = true;
+  manualReceiptFeedback.textContent = "Submitting your payment code…";
+  try {
+    const response = await fetch(
+      `${CHECKOUT_API_BASE}/api/v1/payments/${encodeURIComponent(pendingReservation.payment_reference)}/manual-receipt`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_code: manualTransactionCode.value.trim() })
+      }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not submit the payment code.");
+
+    pendingReservation.payment_status = data.payment_status;
+    manualTransactionCode.disabled = true;
+    manualReceiptFeedback.textContent = "Payment code submitted. The organizer will verify your payment.";
+    startLivePaymentPolling(pendingReservation);
+  } catch (error) {
+    manualReceiptFeedback.textContent = error.message;
+    manualReceiptSubmit.disabled = false;
+  }
+}
+
+async function loadPaymentOptions() {
+  const response = await fetch(`${CHECKOUT_API_BASE}/api/v1/payment-options`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not load payment options.");
+  paymentOptions = data.payment_options;
+  manualCheckoutEnabled = paymentOptions.mode === "manual";
+  providerPaymentFields.hidden = manualCheckoutEnabled;
+  for (const control of providerPaymentFields.querySelectorAll("select, input")) {
+    control.disabled = manualCheckoutEnabled;
+    control.required = !manualCheckoutEnabled;
+  }
+  if (manualCheckoutEnabled) {
+    document.getElementById("checkout-instructions").textContent =
+      "Select your ticket and quantity. Pay the displayed total to the Pochi la Biashara number, then submit your M-Pesa code.";
+  }
+  checkoutForm.querySelector('button[type="submit"]').disabled = false;
+}
+
 async function submitReservation(event) {
   event.preventDefault();
   if (!checkoutForm.reportValidity() || !checkoutEvent) return;
@@ -170,6 +322,16 @@ async function submitReservation(event) {
   }
 
   submit.disabled = true;
+  if (manualCheckoutEnabled) {
+    feedback.textContent = "Creating your order…";
+    try {
+      await createManualOrder();
+    } catch (error) {
+      feedback.textContent = error.message;
+      submit.disabled = false;
+    }
+    return;
+  }
   feedback.textContent = "Creating your 15-minute reservation…";
   try {
     const response = await fetch(
@@ -266,6 +428,12 @@ window.setupPlayTicketsCheckout = function setupPlayTicketsCheckout(event) {
   checkoutEvent = event;
   if (!checkoutListenerAttached) {
     checkoutForm.addEventListener("submit", submitReservation);
+    manualReceiptForm.addEventListener("submit", submitManualReceipt);
     checkoutListenerAttached = true;
   }
+  checkoutForm.querySelector('button[type="submit"]').disabled = true;
+  loadPaymentOptions().catch((error) => {
+    document.getElementById("booking-feedback").textContent = error.message;
+    document.getElementById("book-event").disabled = true;
+  });
 };
