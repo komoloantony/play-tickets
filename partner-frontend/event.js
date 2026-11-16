@@ -3,7 +3,8 @@
 const API_BASE = window.PLAY_TICKETS_API_BASE ||
   (window.location.protocol === "file:" ||
     window.location.port === "8000" ||
-    window.location.port === "8001"
+    window.location.port === "8001" ||
+    window.location.port === "5500"
     ? "http://127.0.0.1:5000"
     : window.location.origin);
 const PAYMENT_POLL_INTERVAL_MS = 8000;
@@ -82,7 +83,20 @@ function renderIssuedTickets(tickets, reference) {
     qrContainer.append(qrImage);
     const code = document.createElement("p");
     code.textContent = `Ticket code: ${ticket.ticket_code}`;
-    card.append(heading, eventName, qrContainer, code);
+    const buyerName = document.createElement("p");
+buyerName.textContent = `Customer: ${ticket.buyer_name}`;
+
+const buyerEmail = document.createElement("p");
+buyerEmail.textContent = `Email: ${ticket.buyer_email}`;
+
+card.append(
+  heading,
+  eventName,
+  buyerName,
+  buyerEmail,
+  qrContainer,
+  code
+);
     issuedTickets.append(card);
   }
 }
@@ -278,48 +292,48 @@ ticketTypeSelect.addEventListener("change", updateQuantityOptions);
 
 bookingForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!bookingForm.reportValidity() || !eventRecord || paymentReference) return;
+
+  if (!bookingForm.reportValidity() || !eventRecord || paymentReference) {
+    return;
+  }
 
   submitButton.disabled = true;
-  paymentFeedback.textContent = "Creating your reservation and sending the payment request…";
+  paymentFeedback.textContent = "Recording your booking...";
+
   try {
     const response = await fetch(
-      `${API_BASE}/api/v1/ticket-types/${encodeURIComponent(ticketTypeSelect.value)}/reservations`,
+      `${API_BASE}/api/v1/ticket-types/${encodeURIComponent(ticketTypeSelect.value)}/bookings`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           buyer_name: document.getElementById("buyer-name").value.trim(),
           buyer_email: document.getElementById("buyer-email").value.trim(),
-          quantity: Number(quantitySelect.value),
-          payment_provider: document.getElementById("payment-provider").value,
-          payment_phone: document.getElementById("payment-phone").value.trim()
+          quantity: Number(quantitySelect.value)
         })
       }
     );
+
     const data = await parseJsonResponse(response);
-    if (!response.ok && response.status !== 202) {
-      throw new Error(data.error || "The payment request could not be started.");
-    }
-    if (!data.reservation) {
-      throw new Error(data.error || "The payment provider returned no reservation.");
+
+    if (!response.ok) {
+      throw new Error(data.error || "Your booking could not be recorded.");
     }
 
-    paymentReference = data.reservation.payment_reference;
-    issuedTickets.replaceChildren();
-    paymentFeedback.textContent = data.message;
-    showPaymentStatus(
-      data.reservation.payment_status === "unknown"
-        ? "Payment status uncertain"
-        : "Waiting for payment",
-      data.reservation.payment_status === "unknown"
-        ? data.message
-        : `Payment request sent for KSh ${Number(data.reservation.payment_amount).toLocaleString("en-KE")}. Approve it on your phone.`,
-      paymentReference
-    );
+    if (!data.booking) {
+      throw new Error("The server returned no booking details.");
+    }
+
+    paymentFeedback.textContent = data.email_sent
+      ? "A booking notification has been sent to your email."
+      : "Your booking was recorded, but the email notification could not be sent.";
+
+    bookingFeedback.textContent =
+      `Booking recorded successfully! Your reference is ${data.booking.reference}. Payment is still pending.`;
+
+    submitButton.textContent = "Booking recorded";
     submitButton.disabled = true;
-    pollingTimer = window.setInterval(checkPaymentStatus, PAYMENT_POLL_INTERVAL_MS);
-    await checkPaymentStatus();
+
   } catch (error) {
     paymentFeedback.textContent = error.message;
     submitButton.disabled = false;

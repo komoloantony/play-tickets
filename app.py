@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+from booking_email import send_booking_email
 
 from flask import Flask, jsonify, request
 import qrcode
@@ -391,6 +392,128 @@ def api_reserve_tickets(ticket_type_id):
     }), 201
 
 
+@app.post("/api/v1/ticket-types/<int:ticket_type_id>/bookings")
+def api_create_booking(ticket_type_id):
+    """Record a booking without starting a payment request."""
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    customer_name = str(
+        data.get("buyer_name", data.get("customer_name", ""))
+    ).strip()
+    customer_email = str(
+        data.get("buyer_email", data.get("customer_email", ""))
+    ).strip()
+
+    try:
+        quantity = int(data.get("quantity", 1))
+    except (TypeError, ValueError, OverflowError):
+        quantity = 0
+
+    if (
+        not customer_name
+        or "@" not in customer_email
+        or quantity < 1
+        or quantity > 10
+    ):
+        return jsonify({
+            "error": "Provide your name, a valid email and a quantity from 1 to 10."
+        }), 400
+
+    db = get_db()
+
+    ticket_type = db.execute(
+        "SELECT t.*, e.id AS event_id, e.name AS event_name "
+        "FROM ticket_types t "
+        "JOIN events e ON e.id = t.event_id "
+        "WHERE t.id = ?",
+        (ticket_type_id,),
+    ).fetchone()
+
+    if ticket_type is None:
+        return jsonify({"error": "Ticket type not found."}), 404
+
+    try:
+        total_amount = Decimal(str(ticket_type["price"])) * quantity
+
+        if total_amount < 1 or total_amount != total_amount.to_integral_value():
+            raise InvalidOperation
+
+        total_amount = int(total_amount)
+
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({
+            "error": "Ticket prices must total a whole number of KES and be at least KES 1."
+        }), 400
+
+    # Lock the ticket type before checking availability.
+    locked_ticket_type = lock_row(
+        db,
+        "SELECT id FROM ticket_types WHERE id = ?",
+        (ticket_type_id,),
+    ).fetchone()
+
+    if locked_ticket_type is None:
+        db.rollback()
+        return jsonify({"error": "Ticket type not found."}), 404
+
+    available = remaining_tickets(ticket_type)
+
+    if quantity > available:
+        db.rollback()
+        return jsonify({
+            "error": "Not enough tickets remain.",
+            "available": available,
+        }), 409
+
+    created_at = datetime.now(timezone.utc)
+    booking_reference = f"FB-{uuid.uuid4().hex[:12].upper()}"
+
+    cursor = db.execute(
+        "INSERT INTO bookings "
+        "(booking_reference, ticket_type_id, customer_name, customer_email, "
+        "quantity, total_amount, booking_status, payment_status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'reserved', 'pending', ?) RETURNING id",
+        (
+            booking_reference,
+            ticket_type_id,
+            customer_name,
+            customer_email,
+            quantity,
+            total_amount,
+            created_at.isoformat(),
+        ),
+    )
+
+    booking_id = inserted_id(cursor)
+    db.commit()
+
+    booking = {
+        "id": booking_id,
+        "reference": booking_reference,
+        "customer_name": customer_name,
+        "customer_email": customer_email,
+        "event_name": ticket_type["event_name"],
+        "ticket_type": ticket_type["name"],
+        "quantity": quantity,
+        "total_amount": total_amount,
+        "payment_status": "pending",
+        "booking_status": "reserved",
+        "created_at": created_at.isoformat(),
+    }
+
+    email_sent = send_booking_email(booking)
+
+    return jsonify({
+        "message": "Your booking has been recorded.",
+        "booking": booking,
+        "email_sent": email_sent,
+    }), 201
+
+
+
 def _ticket_qr_svg(ticket_code):
     qr = qrcode.QRCode(
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -445,7 +568,9 @@ def _tickets_for_order(db, order_id):
     ).fetchall()
     return [{
         "ticket_number": row["ticket_number"],
-        "ticket_code": row["ticket_code"],
+        "ticket_code" :row["ticket_code"],
+        "orders.buyer_name" : row["buyer_name"],
+        "orders.buyer_email" : row["buyer_email"],
         "qr_svg": _ticket_qr_svg(row["ticket_code"]),
         "status": row["status"],
         "issued_at": row["issued_at"],

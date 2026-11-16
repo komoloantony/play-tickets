@@ -75,8 +75,8 @@
 <p class="booking-feedback" id="booking-feedback" role="status"></p>
 
 <form class="booking-form" id="booking-form" hidden>
-  <h3>Pay for your tickets</h3>
-  <p>We’ll send a payment request to your phone. Approve it to confirm your booking.</p>
+  <h3>Reserve your tickets</h3>
+  <p>Enter your details once for your entire booking. Payment will be completed in the next step.</p>
 
   <label for="buyer-name">Your full name</label>
   <input
@@ -108,31 +108,13 @@
     <option value="1">1 ticket</option>
   </select>
 
-  <label for="payment-provider">Payment method</label>
-  <select id="payment-provider" name="payment_provider" required>
-    <option value="mpesa">M-Pesa</option>
-    <option value="airtel">Airtel Money</option>
-  </select>
-
-  <label for="payment-phone">Kenyan mobile number</label>
-  <input
-    id="payment-phone"
-    name="payment_phone"
-    type="tel"
-    inputmode="tel"
-    autocomplete="tel"
-    placeholder="e.g. 0712345678"
-    pattern="(?:\+?254|0)(?:7|1)[0-9]{8}"
-    maxlength="13"
-    required
-  >
-
   <button class="primary-button" type="submit" disabled>
-    Continue to payment
+    Reserve tickets
   </button>
 
   <p id="payment-feedback" class="booking-feedback" role="status"></p>
 </form>
+
 
       </div>
     </section>
