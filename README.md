@@ -97,7 +97,7 @@ Then open `http://127.0.0.1:8000/` in a browser. Opening `partner-frontend/event
 
 ### Admin review page
 
-The admin page is in `Frontend/`, not `partner-frontend/`. Start a second static server from `Frontend/`:
+The admin page source is in `Frontend/`; matching `admin.html`, `admin.js`, and `admin.css` files are mirrored in `partner-frontend/` so the deployed storefront serves the current admin UI. Keep those three files synchronized when changing the admin page. Start a second static server from `Frontend/`:
 
 ```powershell
 Set-Location Frontend
