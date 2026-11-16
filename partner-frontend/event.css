@@ -255,15 +255,19 @@
 }
 
 .payment-number-card {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   margin: 16px 0;
   padding: 18px;
   border: 1px solid var(--gold);
   border-radius: 8px;
   background: #090909;
+}
+
+.payment-number-card > div {
+  min-width: 0;
 }
 
 .payment-number-label {
@@ -282,14 +286,46 @@
 }
 
 .copy-payment-number {
-  width: auto !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px !important;
+  height: 44px;
   margin: 0 !important;
-  padding: 12px 18px;
+  padding: 0 !important;
+  border: 1px solid var(--gold);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gold-light);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s;
   white-space: nowrap;
 }
 
+.copy-payment-number:hover {
+  border-color: var(--gold-light);
+  background: var(--gold);
+  color: #15110a;
+  transform: translateY(-1px);
+}
+
+.copy-payment-number:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 3px;
+}
+
+.copy-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .copy-payment-feedback {
-  flex-basis: 100%;
+  grid-column: 1 / -1;
   margin: 0;
   color: var(--muted);
   font-size: 13px;
@@ -297,11 +333,17 @@
 
 @media (max-width: 520px) {
   .payment-number-card {
-    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .payment-number-value {
+    font-size: clamp(24px, 8vw, 36px);
   }
 
   .copy-payment-number {
-    width: 100% !important;
+    width: 40px !important;
+    height: 40px;
   }
 }
 

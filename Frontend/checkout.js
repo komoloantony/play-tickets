@@ -256,7 +256,7 @@ copyPaymentNumberButton.addEventListener("click", async () => {
   }
   try {
     await navigator.clipboard.writeText(number);
-    copyPaymentFeedback.textContent = `Copied ${number}.`;
+    copyPaymentFeedback.textContent = "Copied to clipboard.";
   } catch {
     copyPaymentFeedback.textContent = "Could not copy. Select and copy the number above.";
   }
