@@ -3,7 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Event | Firebrand Tickets</title>
+  <meta name="description" content="Book tickets for Firebrand Nation events. Pay by M-Pesa and receive your QR entry ticket after organizer verification.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Firebrand Tickets | Event booking">
+  <meta property="og:description" content="Book tickets for Firebrand Nation events. Pay by M-Pesa and receive your QR entry ticket after organizer verification.">
+  <meta property="og:url" content="https://play-tickets-1.onrender.com/event.html">
+  <meta property="og:image" content="https://play-tickets-1.onrender.com/assets/behind-the-sins.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>Event booking | Firebrand Tickets</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <script>
+    if (window.location.protocol !== "file:" &&
+        !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      window.PLAY_TICKETS_API_BASE = "https://play-tickets.onrender.com";
+    }
+  </script>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="event.css">
   <script src="checkout.js" defer></script>
@@ -112,6 +126,7 @@
             <div>
               <span class="payment-number-label">Pochi la Biashara</span>
               <strong class="payment-number-value" id="mpesa-payment-number"></strong>
+              <span class="payment-account-name">Registered name: <strong id="mpesa-account-name">Evans Kariuki</strong></span>
             </div>
             <button
               class="primary-button copy-payment-number"
@@ -156,6 +171,23 @@
       <p></p>
     </section>
   </main>
+
+  <section class="trust-section" aria-label="Buyer support and policies">
+    <div class="trust-grid">
+      <article class="trust-card">
+        <h2>Need help?</h2>
+        <p>Call <a href="tel:+254711422001">0711 422 001</a> for order or ticket support.</p>
+      </article>
+      <article class="trust-card">
+        <h2>Ticket &amp; refund terms</h2>
+        <p>Tickets are non-refundable for buyer cancellations. If the organizer cancels the event, buyers receive a full refund.</p>
+      </article>
+      <article class="trust-card">
+        <h2>Privacy</h2>
+        <p>We use your name, email, order details, and submitted M-Pesa transaction code to verify payment, issue tickets, and support entry. Contact us to request access or correction of your information.</p>
+      </article>
+    </div>
+  </section>
 
   <footer class="site-footer">
     <a class="brand" href="index.html">

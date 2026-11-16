@@ -4,7 +4,7 @@ const ADMIN_API_BASE = window.PLAY_TICKETS_API_BASE ||
   (window.location.port === "8000" || window.location.port === "8001" ||
     window.location.protocol === "file:"
     ? "http://127.0.0.1:5000"
-    : window.location.origin);
+    : "https://play-tickets.onrender.com");
 
 const accessForm = document.getElementById("admin-access");
 const tokenInput = document.getElementById("admin-token");

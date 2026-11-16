@@ -5,7 +5,7 @@ const CHECKOUT_API_BASE = window.PLAY_TICKETS_API_BASE ||
     window.location.protocol === "file:"
     ? "http://127.0.0.1:5000"
     : window.location.origin);
-const ORDER_REFERENCE_STORAGE_KEY_PREFIX = "playTickets:frontend";
+const ORDER_REFERENCE_STORAGE_KEY = "playTickets:lastOrderReference";
 
 const checkoutForm = document.getElementById("booking-form");
 const checkoutResults = document.getElementById("ticket-results");
@@ -13,6 +13,7 @@ const providerPaymentFields = document.getElementById("provider-payment-fields")
 const manualPaymentPanel = document.getElementById("manual-payment-panel");
 const manualPaymentInstructions = document.getElementById("manual-payment-instructions");
 const mpesaPaymentNumber = document.getElementById("mpesa-payment-number");
+const mpesaAccountName = document.getElementById("mpesa-account-name");
 const copyPaymentNumberButton = document.getElementById("copy-payment-number");
 const copyPaymentFeedback = document.getElementById("copy-payment-feedback");
 const manualReceiptForm = document.getElementById("manual-receipt-form");
@@ -29,7 +30,7 @@ let paymentOptions;
 let orderIsTerminal = false;
 
 function orderReferenceStorageKey() {
-  return `${ORDER_REFERENCE_STORAGE_KEY_PREFIX}:${checkoutEvent ? checkoutEvent.id : "unknown"}`;
+  return ORDER_REFERENCE_STORAGE_KEY;
 }
 
 function rememberOrderReference(reference) {
@@ -49,11 +50,18 @@ function getRememberedOrderReference() {
   if (!reference) {
     try {
       reference = window.localStorage.getItem(orderReferenceStorageKey());
+      if (!reference && checkoutEvent) {
+        reference = window.localStorage.getItem(
+          `playTickets:frontend:${checkoutEvent.id}`
+        );
+      }
     } catch (error) {
       console.warn("Could not read the saved order reference.", error);
     }
   }
-  return reference && /^PT-[A-F0-9]{32}$/.test(reference) ? reference : null;
+  if (!reference || !/^PT-[A-F0-9]{32}$/.test(reference)) return null;
+  rememberOrderReference(reference);
+  return reference;
 }
 
 function markOrderTerminal() {
@@ -237,6 +245,8 @@ function startLivePaymentPolling(reservation) {
             `${itemSummary}. Total: ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. ` +
             `Pay the exact amount to ${paymentOptions.mpesa.method}, then submit your M-Pesa transaction code.`;
           mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+          mpesaAccountName.textContent =
+            paymentOptions.mpesa.account_name || mpesaAccountName.textContent || "Evans Kariuki";
           manualPaymentPanel.hidden = false;
           manualReceiptForm.hidden = false;
           manualTransactionCode.disabled = false;
@@ -312,6 +322,8 @@ async function createManualOrder() {
     `Pay the exact amount to ${paymentOptions.mpesa.method}. ` +
     `Enter your M-Pesa transaction code below. Keep reference ${data.order.payment_reference}.`;
   mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+  mpesaAccountName.textContent =
+    paymentOptions.mpesa.account_name || mpesaAccountName.textContent || "Evans Kariuki";
   copyPaymentFeedback.textContent = "";
   manualReceiptForm.reset();
   manualTransactionCode.disabled = false;

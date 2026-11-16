@@ -5,8 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Firebrand Tickets event sales and reservation review.">
   <title>Admin review | Firebrand Tickets</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="admin.css">
+  <script>
+    if (window.location.protocol !== "file:" &&
+        !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      window.PLAY_TICKETS_API_BASE = "https://play-tickets.onrender.com";
+    }
+  </script>
   <script src="admin.js" defer></script>
 </head>
 <body class="admin-page">

@@ -46,7 +46,9 @@ function renderTicketTypes() {
     const priceCard = document.createElement("div");
     priceCard.className = "ticket-price-option";
     const name = document.createElement("span");
-    name.textContent = `${ticket.name} · ${ticket.available} available`;
+    name.textContent = Number(ticket.available) > 0
+      ? `${ticket.name} · ${ticket.available} of ${ticket.capacity} available`
+      : `${ticket.name} · Sold out`;
     const price = document.createElement("strong");
     price.textContent = `KSh ${Number(ticket.price).toLocaleString("en-KE")}`;
     priceCard.append(name, price);

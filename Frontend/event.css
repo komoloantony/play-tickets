@@ -70,6 +70,17 @@
   line-height: 1.9;
 }
 
+.payment-account-name {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.payment-account-name strong {
+  color: var(--text);
+}
+
 .detail-list {
   margin: 25px 0;
   border-top: 1px solid var(--border);

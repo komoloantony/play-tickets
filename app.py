@@ -89,6 +89,58 @@ def ticket_type_json(ticket_type):
     }
 
 
+def _lock_buyer_order(db, buyer_email):
+    """Serialize order creation for one normalized buyer email."""
+    email_key = buyer_email.strip().lower()
+    db.execute(
+        "INSERT INTO buyer_order_locks (buyer_email) VALUES (?) "
+        "ON CONFLICT DO NOTHING",
+        (email_key,),
+    )
+    db.commit()
+    lock_row(
+        db,
+        "SELECT buyer_email FROM buyer_order_locks WHERE buyer_email = ?",
+        (email_key,),
+    )
+    return email_key
+
+
+def _lock_row_in_transaction(db, statement, parameters=()):
+    """Lock another row while preserving an already-open SQLite transaction."""
+    if db.is_postgres:
+        statement += " FOR UPDATE"
+    return db.execute(statement, parameters)
+
+
+def _pending_order_for_buyer(db, email_key):
+    return db.execute(
+        "SELECT payment_status FROM orders "
+        "WHERE lower(buyer_email) = ? AND status = 'pending' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (email_key,),
+    ).fetchone()
+
+
+def _buyer_order_conflict(db, email_key):
+    """Return a conflict response while releasing the buyer lock."""
+    active_order = _pending_order_for_buyer(db, email_key)
+    if active_order is None:
+        return None
+    db.rollback()
+    return jsonify({
+        "error": (
+            "You already have an order awaiting payment or verification. "
+            "Return to your existing order to follow its status; you can buy "
+            "again after it is approved, rejected, or expires."
+        ),
+        "active_order": {
+            "payment_status": active_order["payment_status"],
+            "reservation_status": "pending",
+        },
+    }), 409
+
+
 def event_json(event):
     """Turn an event row and its ticket types into JSON for the frontend."""
     db = get_db()
@@ -261,6 +313,9 @@ def api_payment_options():
                 "PLAY_TICKETS_MPESA_METHOD_LABEL", "Pochi la Biashara"
             ).strip() or "Pochi la Biashara",
             "till_number": till_number,
+            "account_name": os.environ.get(
+                "PLAY_TICKETS_MPESA_ACCOUNT_NAME", "Evans Kariuki"
+            ).strip() or "Evans Kariuki",
         }
     return jsonify({"payment_options": options})
 
@@ -275,7 +330,7 @@ def api_create_manual_order(event_id):
         return jsonify({"error": "Request body must be a JSON object."}), 400
 
     buyer_name = str(data.get("buyer_name", "")).strip()
-    buyer_email = str(data.get("buyer_email", "")).strip()
+    buyer_email = str(data.get("buyer_email", "")).strip().lower()
     raw_items = data.get("ticket_items")
     if not buyer_name or "@" not in buyer_email or not isinstance(raw_items, list):
         return jsonify({
@@ -339,8 +394,12 @@ def api_create_manual_order(event_id):
 
     expire_pending_reservations(db)
     db.commit()
+    email_key = _lock_buyer_order(db, buyer_email)
+    buyer_conflict = _buyer_order_conflict(db, email_key)
+    if buyer_conflict:
+        return buyer_conflict
     lock_placeholders = ", ".join("?" for _ in ticket_types)
-    locked_types = lock_row(
+    locked_types = _lock_row_in_transaction(
         db,
         f"SELECT id FROM ticket_types WHERE id IN ({lock_placeholders}) ORDER BY id",
         tuple(ticket_type["id"] for ticket_type in ticket_types),
@@ -485,7 +544,7 @@ def api_reserve_tickets(ticket_type_id):
         return jsonify({"error": "Request body must be a JSON object."}), 400
 
     buyer_name = str(data.get("buyer_name", "")).strip()
-    buyer_email = str(data.get("buyer_email", "")).strip()
+    buyer_email = str(data.get("buyer_email", "")).strip().lower()
     payment_provider = str(data.get("payment_provider", "")).strip().lower()
     payment_phone = re.sub(r"[\s()-]", "", str(data.get("payment_phone", "")))
     if payment_phone.startswith("+"):
@@ -534,7 +593,11 @@ def api_reserve_tickets(ticket_type_id):
     # buyers cannot both grab what looks like the very last ticket.
     expire_pending_reservations(db)
     db.commit()
-    locked_ticket_type = lock_row(
+    email_key = _lock_buyer_order(db, buyer_email)
+    buyer_conflict = _buyer_order_conflict(db, email_key)
+    if buyer_conflict:
+        return buyer_conflict
+    locked_ticket_type = _lock_row_in_transaction(
         db, "SELECT id FROM ticket_types WHERE id = ?", (ticket_type_id,)
     ).fetchone()
     if locked_ticket_type is None:

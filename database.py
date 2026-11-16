@@ -155,6 +155,11 @@ def initialize_database(db):
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS buyer_order_locks (
+                buyer_email TEXT PRIMARY KEY
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS ticket_email_outbox (
                 order_id BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
                 status TEXT NOT NULL DEFAULT 'pending'
@@ -267,6 +272,13 @@ def initialize_database(db):
                 order_id INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
                 transaction_code TEXT NOT NULL UNIQUE,
                 submitted_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS buyer_order_locks (
+                buyer_email TEXT PRIMARY KEY
             )
             """
         )

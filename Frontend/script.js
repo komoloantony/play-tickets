@@ -14,6 +14,7 @@ eventList.className = "event-list";
 eventList.setAttribute("aria-live", "polite");
 oldCard.replaceWith(eventList);
 if (oldDisclaimer) oldDisclaimer.remove();
+const homePosterTitle = document.getElementById("home-poster-title");
 
 function makeElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -72,11 +73,27 @@ function createEventCard(event) {
 
   const footer = makeElement("div", "event-card-footer");
   const priceInfo = makeElement("div");
-  const firstTicket = ticketTypes[0];
+  const priceSummary = makeElement("div", "ticket-price-summary");
   priceInfo.append(
-    makeElement("small", "", "TICKET PRICE"),
-    makeElement("p", "price", firstTicket ? `KSh ${firstTicket.price} per person` : "Unavailable")
+    makeElement("small", "", "LIVE TICKET OPTIONS"),
+    priceSummary
   );
+  if (ticketTypes.length) {
+    for (const ticket of ticketTypes) {
+      const availableCount = Number(ticket.available || 0);
+      priceSummary.append(makeElement(
+        "p",
+        "",
+        `${ticket.name}: KSh ${Number(ticket.price).toLocaleString("en-KE")} · ${
+          availableCount > 0
+            ? `${availableCount} of ${ticket.capacity} available`
+            : "Sold out"
+        }`
+      ));
+    }
+  } else {
+    priceSummary.append(makeElement("p", "", "No ticket categories available."));
+  }
   const link = makeElement("a", "primary-button", "View event →");
   link.href = `event.html?id=${encodeURIComponent(event.id)}`;
   footer.append(priceInfo, link);
@@ -94,7 +111,10 @@ async function loadEvents() {
     if (!data.events || data.events.length === 0) {
       eventList.append(makeElement("p", "demo-disclaimer", "No events are available yet. Please check back soon."));
     } else {
+      homePosterTitle.textContent = data.events[0].name;
       data.events.forEach((event) => eventList.append(createEventCard(event)));
+      document.getElementById("header-find-tickets").href =
+        `event.html?id=${encodeURIComponent(data.events[0].id)}`;
     }
   } catch (error) {
     eventList.replaceChildren(makeElement(

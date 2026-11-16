@@ -7,7 +7,7 @@ const API_BASE = window.PLAY_TICKETS_API_BASE ||
     ? "http://127.0.0.1:5000"
     : window.location.origin);
 const PAYMENT_POLL_INTERVAL_MS = 8000;
-const ORDER_REFERENCE_STORAGE_KEY = "playTickets:partner:lastOrderReference";
+const ORDER_REFERENCE_STORAGE_KEY = "playTickets:lastOrderReference";
 
 const bookButton = document.getElementById("book-event");
 const bookingForm = document.getElementById("booking-form");
@@ -20,6 +20,7 @@ const paymentResultReference = document.getElementById("payment-result-reference
 const issuedTickets = document.getElementById("issued-tickets");
 const ticketPrices = document.getElementById("ticket-prices");
 const eventDescription = document.getElementById("event-description");
+const eventName = document.getElementById("event-name");
 const eventDate = document.getElementById("event-date");
 const eventVenue = document.getElementById("event-venue");
 const ticketTypeSelect = document.getElementById("ticket-type");
@@ -32,6 +33,7 @@ const manualOrderTotal = document.getElementById("manual-order-total");
 const manualPaymentPanel = document.getElementById("manual-payment-panel");
 const manualPaymentInstructions = document.getElementById("manual-payment-instructions");
 const mpesaPaymentNumber = document.getElementById("mpesa-payment-number");
+const mpesaAccountName = document.getElementById("mpesa-account-name");
 const copyPaymentNumberButton = document.getElementById("copy-payment-number");
 const copyPaymentFeedback = document.getElementById("copy-payment-feedback");
 const manualOrderExpiry = document.getElementById("manual-order-expiry");
@@ -65,11 +67,18 @@ function getRememberedOrderReference() {
   if (!reference) {
     try {
       reference = window.localStorage.getItem(ORDER_REFERENCE_STORAGE_KEY);
+      if (!reference) {
+        reference = window.localStorage.getItem(
+          "playTickets:partner:lastOrderReference"
+        );
+      }
     } catch (error) {
       console.warn("Could not read the saved order reference.", error);
     }
   }
-  return reference && /^PT-[A-F0-9]{32}$/.test(reference) ? reference : null;
+  if (!reference || !/^PT-[A-F0-9]{32}$/.test(reference)) return null;
+  rememberOrderReference(reference);
+  return reference;
 }
 
 function clearRememberedOrderReference() {
@@ -188,7 +197,9 @@ function renderTicketTypes() {
     }
 
     const name = document.createElement("span");
-    name.textContent = `${ticket.name} · ${ticket.available} available`;
+    name.textContent = Number(ticket.available) > 0
+      ? `${ticket.name} · ${ticket.available} of ${ticket.capacity} available`
+      : `${ticket.name} · Sold out`;
     const price = document.createElement("strong");
     price.textContent = `KSh ${Number(ticket.price).toLocaleString("en-KE")}`;
     priceCard.append(name, price);
@@ -244,7 +255,11 @@ function renderManualTicketQuantities() {
     row.className = "manual-ticket-row";
     const description = document.createElement("span");
     description.textContent =
-      `${ticket.name} · KSh ${Number(ticket.price).toLocaleString("en-KE")} · ${ticket.available} available`;
+      `${ticket.name} · KSh ${Number(ticket.price).toLocaleString("en-KE")} · ${
+        Number(ticket.available) > 0
+          ? `${ticket.available} of ${ticket.capacity} available`
+          : "Sold out"
+      }`;
     const quantity = document.createElement("input");
     quantity.type = "number";
     quantity.min = "0";
@@ -284,13 +299,18 @@ async function loadEvent() {
     const optionsData = await getJsonResponse(optionsResponse);
     paymentOptions = optionsData.payment_options;
     manualCheckoutEnabled = paymentOptions.mode === "manual";
-    eventRecord = (data.events || []).find(
-      (item) => item.name.trim().toLowerCase() === "behind the sins"
+    const requestedEventId = new URLSearchParams(window.location.search).get("id");
+    eventRecord = (data.events || []).find((item) =>
+      requestedEventId
+        ? String(item.id) === requestedEventId
+        : item.name.trim().toLowerCase() === "behind the sins"
     );
     if (!eventRecord) {
       throw new Error("Ticket sales for this event are not set up yet.");
     }
 
+    eventName.textContent = eventRecord.name;
+    document.title = `${eventRecord.name} | Firebrand Tickets`;
     eventDescription.textContent =
       eventRecord.description || "Event details will be announced by the organizer.";
     const startsAt = new Date(eventRecord.starts_at);
@@ -372,6 +392,8 @@ async function createManualOrder() {
     `Pay the exact amount to ${paymentOptions.mpesa.method}. ` +
     `Enter your M-Pesa transaction code below. Keep reference ${paymentReference}.`;
   mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+  mpesaAccountName.textContent =
+    paymentOptions.mpesa.account_name || mpesaAccountName.textContent || "Evans Kariuki";
   manualOrderExpiry.textContent =
     `Your tickets are held until ${new Date(data.order.expires_at).toLocaleTimeString()}.`;
   manualPaymentPanel.hidden = false;
@@ -489,6 +511,8 @@ async function checkPaymentStatus() {
           `${itemSummary}. Total: ${data.payment_currency} ${Number(data.payment_amount).toLocaleString("en-KE")}. ` +
           `Pay the exact amount to ${paymentOptions.mpesa.method}, then submit your M-Pesa transaction code.`;
         mpesaPaymentNumber.textContent = paymentOptions.mpesa.till_number;
+        mpesaAccountName.textContent =
+          paymentOptions.mpesa.account_name || mpesaAccountName.textContent || "Evans Kariuki";
         manualPaymentPanel.hidden = false;
         manualReceiptForm.hidden = false;
         manualTransactionCode.disabled = false;

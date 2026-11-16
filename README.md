@@ -34,9 +34,9 @@ Set `PLAY_TICKETS_ADMIN_TOKEN`, `PLAY_TICKETS_SECRET`, payment credentials, and 
 
 ### Manual M-Pesa checkout (default)
 
-The site defaults to manual payment by **Pochi la Biashara: 0711422001**. Buyers choose ticket quantities, see the calculated amount and order reference, pay that exact amount, and submit the M-Pesa transaction code. The backend attaches the code to that order and prevents reuse. The 15-minute ticket hold applies while the buyer is paying; after a transaction code is submitted, the tickets remain held until the organizer approves or rejects the payment. No Daraja, IntaSend, or M-Pesa sandbox credentials are needed.
+The site defaults to manual payment by **Pochi la Biashara: 0711422001**, with the registered recipient **Evans Kariuki** shown to buyers for confirmation. Buyers choose ticket quantities, see the calculated amount and order reference, pay that exact amount, and submit the M-Pesa transaction code. The backend attaches the code to that order and prevents reuse. Submitting a code does not confirm payment or issue tickets; the organizer must verify it in the admin dashboard and approve or reject it. The 15-minute ticket hold applies while the buyer is paying; after a transaction code is submitted, the tickets remain held until the organizer resolves the payment. No Daraja, IntaSend, or M-Pesa sandbox credentials are needed.
 
-The order reference is saved in the page URL and, when browser storage is available, on that device. The buyer can safely leave and return to check the latest status. After approval, the backend issues tickets and attempts to email PDF tickets with their QR codes. Each ticket can also be downloaded individually as a PDF from the order status page. Email delivery uses the persistent database outbox; a failed delivery does not undo ticket issuance, and an admin can retry it from the reservations table.
+Each buyer email can have only one active order at a time across checkout endpoints. The buyer must wait until the existing order is approved, rejected, or its unpaid hold expires before creating another one. Submitted manual payment codes remain reserved for verification even after the initial 15-minute payment window, so leaving the site does not lose the order or its ticket hold. The order reference is saved in the page URL and, when browser storage is available, on that device; returning to the order page restores its latest status. After approval, the backend issues tickets and attempts to email PDF tickets with their QR codes. Each ticket can also be downloaded individually as a PDF from the order status page. Email delivery uses the persistent database outbox; a failed delivery does not undo ticket issuance, and an admin can retry it from the reservations table.
 
 To enable ticket emails, configure the following environment variables in the backend host. Use a provider-issued SMTP app password where required; never put SMTP credentials in frontend files or commit them to Git:
 
@@ -58,6 +58,7 @@ The number and label can be overridden with environment variables. For a Render 
 PLAY_TICKETS_PAYMENT_MODE=manual
 PLAY_TICKETS_MPESA_TILL_NUMBER=0711422001
 PLAY_TICKETS_MPESA_METHOD_LABEL=Pochi la Biashara
+PLAY_TICKETS_MPESA_ACCOUNT_NAME=Evans Kariuki
 PLAY_TICKETS_ADMIN_TOKEN=<private-long-random-value>
 ```
 
@@ -103,7 +104,9 @@ Set-Location Frontend
 python -m http.server 8001
 ```
 
-Open `http://127.0.0.1:8001/admin.html`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations, or use the ticket check-in tool. Staff can scan using a supported browser camera, a USB QR scanner, or enter the printed ticket code. The token is held in browser memory for this tab and is not saved in the frontend files.
+Open `http://127.0.0.1:8001/admin.html`. For the deployed storefront, open `https://play-tickets-1.onrender.com/admin.html`; the page connects to the API at `https://play-tickets.onrender.com`. Enter the admin token configured for the backend to view ticket sales, pending holds, and the latest reservations, or use the ticket check-in tool. Staff can scan using a supported browser camera, a USB QR scanner, or enter the printed ticket code. The token is held in browser memory for this tab and is not saved in the frontend files.
+
+The storefront displays the support number **0711 422 001**, the refund rule (no refunds for buyer cancellations; full refunds if the organizer cancels), and a short privacy notice describing how order and receipt-code data are used. The static pages load live event ticket prices and remaining availability from the API; checkout and the API also enforce inventory limits.
 
 ## API for the frontend
 

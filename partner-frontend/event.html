@@ -3,11 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Book Regular or VIP tickets for Behind the Sins in Nairobi. Pay to the verified Pochi la Biashara recipient and receive tickets after organizer approval.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Behind the Sins | Firebrand Tickets">
+  <meta property="og:description" content="Book Regular or VIP tickets for Behind the Sins in Nairobi. Pay to the verified Pochi la Biashara recipient and receive tickets after organizer approval.">
+  <meta property="og:url" content="https://play-tickets-1.onrender.com/event.html">
+  <meta property="og:image" content="https://play-tickets-1.onrender.com/assets/behind-the-sins.png">
+  <meta name="twitter:card" content="summary_large_image">
   <title>Behind the Sins | Firebrand Tickets</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="event.css">
 <script>
-  window.PLAY_TICKETS_API_BASE = "https://play-tickets.onrender.com";
+  if (window.location.protocol !== "file:" &&
+      !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    window.PLAY_TICKETS_API_BASE = "https://play-tickets.onrender.com";
+  }
 </script>
 
 <script src="event.js" defer></script>
@@ -26,17 +37,20 @@
 
     <section class="event-detail-layout">
       <div class="event-detail-poster">
-        <img
-          src="assets/behind-the-sins.png"
-          alt="Behind the Sins stage play poster: 13 December 2026 at Jesus Is Alive Ministries"
-          width="539"
-          height="668"
-        >
+        <picture>
+          <source srcset="assets/behind-the-sins.webp" type="image/webp">
+          <img
+            src="assets/behind-the-sins.png"
+            alt="Behind the Sins stage play poster"
+            width="539"
+            height="668"
+          >
+        </picture>
       </div>
 
       <div class="event-detail-content">
         <p class="eyebrow">FIREBRAND NATION PRESENTS · A STAGE PLAY</p>
-        <h2>Behind the Sins</h2>
+        <h2 id="event-name">Behind the Sins</h2>
         <p class="event-detail-intro" id="event-description">
           Join Firebrand Nation for Behind the Sins on 13 December 2026. Gates open at 3:00 PM.
         </p>
@@ -45,10 +59,6 @@
           <div>
             <span>Date</span>
             <strong id="event-date">Sunday, December 13, 2026 at 3:00 PM</strong>
-          </div>
-          <div>
-            <span>Gates open</span>
-            <strong>3:00 PM</strong>
           </div>
           <div>
             <span>Venue</span>
@@ -153,6 +163,7 @@
     <div>
       <span class="payment-number-label">Pochi la Biashara</span>
       <strong class="payment-number-value" id="mpesa-payment-number"></strong>
+      <span class="payment-account-name">Registered name: <strong id="mpesa-account-name">Evans Kariuki</strong></span>
     </div>
     <button
       class="primary-button copy-payment-number"
@@ -202,6 +213,23 @@
 </section>
 
   </main>
+
+  <section class="trust-section" aria-label="Buyer support and policies">
+    <div class="trust-grid">
+      <article class="trust-card">
+        <h2>Need help?</h2>
+        <p>Call <a href="tel:+254711422001">0711 422 001</a> for order or ticket support.</p>
+      </article>
+      <article class="trust-card">
+        <h2>Ticket &amp; refund terms</h2>
+        <p>Tickets are non-refundable for buyer cancellations. If the organizer cancels the event, buyers receive a full refund.</p>
+      </article>
+      <article class="trust-card">
+        <h2>Privacy</h2>
+        <p>We use your name, email, order details, and submitted M-Pesa transaction code to verify payment, issue tickets, and support entry. Contact us to request access or correction of your information.</p>
+      </article>
+    </div>
+  </section>
 
   <footer class="site-footer">
     <a class="brand" href="index.html">

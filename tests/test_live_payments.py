@@ -56,12 +56,14 @@ class PaymentFlowTests(unittest.TestCase):
     def tearDown(self):
         self.environment.stop()
 
-    def create_reservation(self, provider="mpesa", quantity=2):
+    def create_reservation(
+        self, provider="mpesa", quantity=2, buyer_email="amina@example.test"
+    ):
         return self.client.post(
             f"/api/v1/ticket-types/{self.ticket_type_id}/reservations",
             json={
                 "buyer_name": "Amina",
-                "buyer_email": "amina@example.test",
+                "buyer_email": buyer_email,
                 "quantity": quantity,
                 "payment_provider": provider,
                 "payment_phone": "0712345678",
@@ -140,6 +142,11 @@ class PaymentFlowTests(unittest.TestCase):
                 f"/api/v1/payments/{reservation['payment_reference']}"
             ).get_json()
             self.assertEqual(unpaid_status["tickets"], [])
+            forged_ticket = self.client.post(
+                "/api/v1/admin/tickets/check-in",
+                headers={"Authorization": "Bearer test-admin-token"},
+                json={"ticket_code": "PTK-" + "A" * 32},
+            )
             confirmed = self.client.post(
                 f"/api/v1/sandbox/payments/{reservation['payment_reference']}/result",
                 headers={"Authorization": "Bearer test-admin-token"},
@@ -161,6 +168,7 @@ class PaymentFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(confirmed.status_code, 200)
+        self.assertEqual(forged_ticket.status_code, 404)
         self.assertEqual(len(status["tickets"]), 2)
         self.assertEqual(checked_in.status_code, 200)
         self.assertEqual(checked_in.get_json()["ticket"]["status"], "checked_in")
@@ -255,6 +263,9 @@ class PaymentFlowTests(unittest.TestCase):
                 f"/api/v1/payments/{order['payment_reference']}/manual-receipt",
                 json={"transaction_code": "QJK82ABC91"},
             )
+            awaiting_review = self.client.get(
+                f"/api/v1/payments/{order['payment_reference']}"
+            ).get_json()
             reviewed = self.client.post(
                 f"/api/v1/admin/payments/{order['payment_reference']}/review",
                 headers={"Authorization": "Bearer test-admin-token"},
@@ -292,6 +303,8 @@ class PaymentFlowTests(unittest.TestCase):
         )
         self.assertEqual(order["quantity"], 3)
         self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(awaiting_review["payment_status"], "submitted")
+        self.assertEqual(awaiting_review["tickets"], [])
         self.assertEqual(reviewed.get_json()["reservation_status"], "confirmed")
         self.assertEqual(reviewed.get_json()["ticket_email_status"], "sent")
         send_ticket_email.assert_called_once()
@@ -423,7 +436,11 @@ class PaymentFlowTests(unittest.TestCase):
             self.assertEqual(defaults.status_code, 200)
             self.assertEqual(
                 defaults.get_json()["payment_options"]["mpesa"],
-                {"method": "Pochi la Biashara", "till_number": "0711422001"},
+                {
+                    "method": "Pochi la Biashara",
+                    "till_number": "0711422001",
+                    "account_name": "Evans Kariuki",
+                },
             )
 
             with patch.dict(os.environ, {"PLAY_TICKETS_MPESA_TILL_NUMBER": ""}):
@@ -438,7 +455,11 @@ class PaymentFlowTests(unittest.TestCase):
             self.assertEqual(configured.status_code, 200)
             self.assertEqual(
                 configured.get_json()["payment_options"]["mpesa"],
-                {"method": "M-Pesa Till", "till_number": "12345"},
+                {
+                    "method": "M-Pesa Till",
+                    "till_number": "12345",
+                    "account_name": "Evans Kariuki",
+                },
             )
 
             with patch.dict(os.environ, {"PLAY_TICKETS_MPESA_TILL_NUMBER": "1234"}):
@@ -466,7 +487,7 @@ class PaymentFlowTests(unittest.TestCase):
                 f"/api/v1/events/{self.event_id}/orders",
                 json={
                     "buyer_name": "Amina",
-                    "buyer_email": "amina@example.test",
+                    "buyer_email": "another@example.test",
                     "ticket_items": [
                         {"ticket_type_id": self.ticket_type_id, "quantity": 1}
                     ],
@@ -480,6 +501,89 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(first.status_code, 202)
         self.assertEqual(duplicate.status_code, 409)
         self.assertIn("already submitted", duplicate.get_json()["error"])
+
+    def test_buyer_cannot_create_another_order_until_manual_review_finishes(self):
+        headers = {"Authorization": "Bearer test-admin-token"}
+        with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
+            os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}
+        ), patch.object(app_module, "send_ticket_email"):
+            first = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "Amina@Example.Test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            reference = first.get_json()["order"]["payment_reference"]
+            blocked_before_receipt = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            submitted = self.client.post(
+                f"/api/v1/payments/{reference}/manual-receipt",
+                json={"transaction_code": "QJK82ABC91"},
+            )
+            blocked_during_review = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "AMINA@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+            approved = self.client.post(
+                f"/api/v1/admin/payments/{reference}/review",
+                headers=headers,
+                json={"decision": "approve"},
+            )
+            allowed_after_approval = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "amina@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(blocked_before_receipt.status_code, 409)
+        self.assertEqual(
+            blocked_before_receipt.get_json()["active_order"]["payment_status"],
+            "pending",
+        )
+        self.assertEqual(submitted.status_code, 202)
+        self.assertEqual(blocked_during_review.status_code, 409)
+        self.assertEqual(
+            blocked_during_review.get_json()["active_order"]["payment_status"],
+            "submitted",
+        )
+        self.assertEqual(approved.status_code, 200)
+        self.assertEqual(allowed_after_approval.status_code, 201)
+
+    def test_live_buyer_cannot_create_a_second_order_while_payment_is_pending(self):
+        with patch("app.start_payment", return_value=payments.PaymentStart(
+            "checkout-pending", "processing"
+        )):
+            first = self.create_reservation()
+            second = self.create_reservation(
+                buyer_email="AMINA@example.test"
+            )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 409)
+        self.assertIn("already have an order", second.get_json()["error"])
 
     def test_rejecting_manual_payment_releases_held_tickets(self):
         with patch.object(app_module, "PAYMENT_MODE", "manual"), patch.dict(
@@ -511,11 +615,22 @@ class PaymentFlowTests(unittest.TestCase):
             available = self.client.get(
                 f"/api/v1/events/{self.event_id}"
             ).get_json()["event"]["ticket_types"][0]["available"]
+            another_order = self.client.post(
+                f"/api/v1/events/{self.event_id}/orders",
+                json={
+                    "buyer_name": "Amina",
+                    "buyer_email": "AMINA@example.test",
+                    "ticket_items": [
+                        {"ticket_type_id": self.ticket_type_id, "quantity": 1}
+                    ],
+                },
+            )
 
         self.assertEqual(rejected.status_code, 200)
         self.assertEqual(status["reservation_status"], "rejected")
         self.assertEqual(status["tickets"], [])
         self.assertEqual(available, 20)
+        self.assertEqual(another_order.status_code, 201)
 
     def test_manual_order_rejects_duplicate_ticket_types_and_over_limit(self):
         with patch.object(app_module, "PAYMENT_MODE", "manual"):

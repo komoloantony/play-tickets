@@ -37,6 +37,10 @@
   box-shadow: 0 12px 35px #0009;
 }
 
+.event-detail-poster picture {
+  display: block;
+}
+
 .event-detail-content h2 {
   margin: 10px 0 14px;
   font-family: 'Playfair Display', Georgia, serif;
@@ -51,6 +55,17 @@
   color: var(--muted);
   font-size: 15px;
   line-height: 1.8;
+}
+
+.payment-account-name {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.payment-account-name strong {
+  color: var(--text);
 }
 
 .detail-list {
