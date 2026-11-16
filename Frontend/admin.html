@@ -7,13 +7,6 @@
   <title>Admin review | Firebrand Tickets</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="admin.css">
-  <script>
-    if (window.location.protocol !== "file:" &&
-        window.location.hostname !== "localhost" &&
-        window.location.hostname !== "127.0.0.1") {
-      window.PLAY_TICKETS_API_BASE = "https://play-tickets.onrender.com";
-    }
-  </script>
   <script src="admin.js" defer></script>
 </head>
 <body class="admin-page">
@@ -37,7 +30,7 @@
     <form class="admin-access" id="admin-access">
       <div>
         <label for="admin-token">Admin token</label>
-        <p>Your token stays in this browser tab and is sent only to the local API.</p>
+        <p>Your token stays in this browser tab and is sent only to the configured API.</p>
       </div>
       <input id="admin-token" type="password" autocomplete="current-password" placeholder="Enter admin token" required>
       <button class="primary-button" type="submit">Load dashboard</button>
@@ -50,6 +43,38 @@
         <button class="refresh-button" id="refresh-dashboard" type="button">Refresh data</button>
       </div>
       <div class="admin-metrics" id="admin-metrics"></div>
+      <section class="admin-panel ticket-type-panel" aria-labelledby="ticket-type-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">TICKET SETUP</p>
+            <h2 id="ticket-type-heading">Add a ticket category</h2>
+          </div>
+        </div>
+        <form id="ticket-type-form" class="ticket-type-form">
+          <div class="ticket-type-fields">
+            <div>
+              <label for="ticket-type-event">Event</label>
+              <select id="ticket-type-event" name="event_id" required disabled>
+                <option value="">Loading events…</option>
+              </select>
+            </div>
+            <div>
+              <label for="ticket-type-name">Category name</label>
+              <input id="ticket-type-name" name="name" type="text" value="VIP" maxlength="100" required>
+            </div>
+            <div>
+              <label for="ticket-type-price">Price (KES)</label>
+              <input id="ticket-type-price" name="price" type="number" min="1" step="1" inputmode="numeric" required>
+            </div>
+            <div>
+              <label for="ticket-type-capacity">Capacity</label>
+              <input id="ticket-type-capacity" name="capacity" type="number" min="1" step="1" inputmode="numeric" required>
+            </div>
+          </div>
+          <button class="primary-button" id="add-ticket-type" type="submit" disabled>Add ticket category</button>
+          <p class="ticket-type-message" id="ticket-type-message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
       <section class="admin-panel checkin-panel" aria-labelledby="checkin-heading">
         <div class="panel-heading">
           <div><p class="eyebrow">DOOR STAFF</p><h2 id="checkin-heading">Ticket check-in</h2></div>

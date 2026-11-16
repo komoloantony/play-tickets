@@ -11,6 +11,13 @@ const tokenInput = document.getElementById("admin-token");
 const message = document.getElementById("admin-message");
 const dashboard = document.getElementById("dashboard");
 const eventPicker = document.getElementById("event-picker");
+const ticketTypeForm = document.getElementById("ticket-type-form");
+const ticketTypeEvent = document.getElementById("ticket-type-event");
+const ticketTypeName = document.getElementById("ticket-type-name");
+const ticketTypePrice = document.getElementById("ticket-type-price");
+const ticketTypeCapacity = document.getElementById("ticket-type-capacity");
+const addTicketTypeButton = document.getElementById("add-ticket-type");
+const ticketTypeMessage = document.getElementById("ticket-type-message");
 const metrics = document.getElementById("admin-metrics");
 const rows = document.getElementById("reservation-rows");
 const emptyReservations = document.getElementById("empty-reservations");
@@ -35,9 +42,7 @@ function setMessage(text, kind = "") {
 
 
 async function adminRequest(path, options = {}) {
-  const url = `${ADMIN_API_BASE}${path}`;
-
-  const response = await fetch(url, {
+  const response = await fetch(`${ADMIN_API_BASE}${path}`, {
     ...options,
     headers: {
       ...(options.headers || {}),
@@ -53,12 +58,12 @@ async function adminRequest(path, options = {}) {
     data = JSON.parse(responseText);
   } catch {
     throw new Error(
-      `API error ${response.status}. URL: ${url}. Response: ${responseText.slice(0, 150)}`
+      `API returned HTTP ${response.status}. Check the API URL: ${ADMIN_API_BASE}${path}`
     );
   }
 
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status}). URL: ${url}`);
+    throw new Error(data.error || `Request failed (${response.status}).`);
   }
 
   return data;
@@ -221,12 +226,22 @@ async function loadDashboard() {
     const data = await adminRequest("/api/v1/admin/events");
     eventData = data.events || [];
     const selected = eventPicker.value;
+    const selectedTicketEvent = ticketTypeEvent.value;
     eventPicker.replaceChildren();
+    ticketTypeEvent.replaceChildren();
     eventData.forEach((event) => {
       const option = new Option(event.name, String(event.id));
       eventPicker.add(option);
+      ticketTypeEvent.add(new Option(event.name, String(event.id)));
     });
     if (eventData.some((event) => String(event.id) === selected)) eventPicker.value = selected;
+    if (eventData.some((event) => String(event.id) === selectedTicketEvent)) {
+      ticketTypeEvent.value = selectedTicketEvent;
+    } else {
+      ticketTypeEvent.value = eventPicker.value;
+    }
+    ticketTypeEvent.disabled = eventData.length === 0;
+    addTicketTypeButton.disabled = eventData.length === 0;
     const available = renderMetrics();
     dashboard.hidden = false;
     await loadReservations();
@@ -247,6 +262,39 @@ accessForm.addEventListener("submit", (event) => {
   if (adminToken) loadDashboard();
 });
 eventPicker.addEventListener("change", () => loadReservations().catch((error) => setMessage(error.message, "error")));
+ticketTypeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!ticketTypeForm.reportValidity() || !ticketTypeEvent.value) return;
+
+  addTicketTypeButton.disabled = true;
+  ticketTypeMessage.textContent = "Adding ticket category…";
+  ticketTypeMessage.className = "ticket-type-message";
+  try {
+    const eventId = ticketTypeEvent.value;
+    const eventName = eventData.find((item) => String(item.id) === eventId)?.name;
+    const data = await adminRequest(
+      `/api/v1/events/${encodeURIComponent(eventId)}/ticket-types`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: ticketTypeName.value.trim(),
+          price: Number(ticketTypePrice.value),
+          capacity: Number(ticketTypeCapacity.value)
+        })
+      }
+    );
+    ticketTypeMessage.textContent =
+      `Added ${data.ticket_type.name} to ${eventName}. It will appear on the event page.`;
+    ticketTypeMessage.className = "ticket-type-message success";
+    await loadDashboard();
+  } catch (error) {
+    ticketTypeMessage.textContent = error.message;
+    ticketTypeMessage.className = "ticket-type-message error";
+  } finally {
+    addTicketTypeButton.disabled = eventData.length === 0;
+  }
+});
 document.getElementById("refresh-dashboard").addEventListener("click", loadDashboard);
 checkinForm.addEventListener("submit", async (event) => {
   event.preventDefault();

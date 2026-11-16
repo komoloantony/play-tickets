@@ -204,6 +204,18 @@ class PaymentFlowTests(unittest.TestCase):
         self.assertEqual(created.get_json()["ticket_type"]["name"], "VIP")
         self.assertEqual(rejected.status_code, 400)
 
+    def test_admin_can_load_reservations_for_event_without_orders(self):
+        with patch.dict(os.environ, {"PLAY_TICKETS_ADMIN_TOKEN": "test-admin-token"}):
+            response = self.client.get(
+                f"/api/v1/admin/events/{self.event_id}/reservations",
+                headers={"Authorization": "Bearer test-admin-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["reservations"], [])
+        self.assertEqual(data["pagination"]["total"], 0)
+
     def test_event_creation_rejects_free_and_fractional_ticket_prices(self):
         headers = {"Authorization": "Bearer test-admin-token"}
         event_data = {

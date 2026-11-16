@@ -913,8 +913,8 @@ def api_admin_reservations(event_id):
         (event_id, limit, offset),
     ).fetchall()
     total = db.execute(
-        "SELECT COUNT(*) FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id "
-        "WHERE t.event_id = ?",
+        "SELECT COUNT(*) AS count FROM orders o JOIN ticket_types t ON t.id = o.ticket_type_id"
+        " WHERE t.event_id = ?",
         (event_id,),
     ).fetchone()["count"]
     reservations = [{
