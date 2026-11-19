@@ -56,6 +56,32 @@ class PaymentFlowTests(unittest.TestCase):
     def tearDown(self):
         self.environment.stop()
 
+    def test_cors_preflight_allows_local_and_deployed_frontends(self):
+        origins = (
+            "http://localhost:63342",
+            "https://firebrandtickets.com",
+            "https://www.firebrandtickets.com",
+            "https://play-tickets-1.onrender.com",
+        )
+        with patch.dict(os.environ, {"PLAY_TICKETS_CORS_ORIGINS": ""}):
+            for origin in origins:
+                with self.subTest(origin=origin):
+                    response = self.client.options(
+                        "/api/v1/admin/events",
+                        headers={
+                            "Origin": origin,
+                            "Access-Control-Request-Method": "GET",
+                            "Access-Control-Request-Headers": "authorization",
+                        },
+                    )
+                    self.assertEqual(
+                        response.headers.get("Access-Control-Allow-Origin"), origin
+                    )
+                    self.assertIn(
+                        "Authorization",
+                        response.headers.get("Access-Control-Allow-Headers", ""),
+                    )
+
     def create_reservation(
         self, provider="mpesa", quantity=2, buyer_email="amina@example.test"
     ):

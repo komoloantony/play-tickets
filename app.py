@@ -41,17 +41,25 @@ app.teardown_appcontext(close_db)
 
 @app.after_request
 def add_local_frontend_cors(response):
-    """Allow the separately served local frontend to call the API during development."""
+    """Allow trusted local and deployed frontends to call the API."""
     origin = request.headers.get("Origin")
     allowed_origins = {
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8001",
+        "http://localhost:8001",
+        "http://localhost:63342",
+        "https://firebrandtickets.com",
+        "https://www.firebrandtickets.com",
+        "https://play-tickets-1.onrender.com",
+    }
+    allowed_origins.update(
         value.strip()
         for value in os.environ.get(
-            "PLAY_TICKETS_CORS_ORIGINS",
-            "http://127.0.0.1:8000,http://localhost:8000,"
-            "http://127.0.0.1:8001,http://localhost:8001",
+            "PLAY_TICKETS_CORS_ORIGINS", ""
         ).split(",")
         if value.strip()
-    }
+    )
     if origin in allowed_origins:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
